@@ -20,9 +20,11 @@ export default function ProductsManager({ userId, printifyToken }) {
   const [templateImageUrl,   setTemplateImageUrl]   = useState('');
 
   // Form state
-  const [form, setForm] = useState({
+ const [form, setForm] = useState({
     name: '', blueprint_id: '', print_provider_id: '', variant_id: '',
     print_width: 2475, print_height: 1155, template_image_url: '',
+    svg_width: null, svg_height: null, 
+    print_area_x: null, print_area_y: null, print_area_w: null, print_area_h: null
   });
   const [saving, setSaving] = useState(false);
 
@@ -178,7 +180,14 @@ const handleVariantChange = async (vid) => {
   print_height:       form.print_height,
   template_image_url: form.template_image_url || null,
   sort_order:         products.length,
-  is_active:          true,         // ← eklendi
+  is_active:          true,
+  // Yeni eklenen alanlar
+  svg_width:          form.svg_width,
+  svg_height:         form.svg_height,
+  print_area_x:       form.print_area_x,
+  print_area_y:       form.print_area_y,
+  print_area_w:       form.print_area_w,
+  print_area_h:       form.print_area_h
 });
     if (error) {
       setMsg('error:Kaydedilemedi: ' + error.message);
@@ -422,24 +431,48 @@ const handleVariantChange = async (vid) => {
                     accept=".svg,image/*"
                     style={{ display: 'none' }}
                     onChange={async (e) => {
-                      const file = e.target.files[0];
-                      if (!file) return;
-                      setMsg('success:Yükleniyor...');
-                      try {
-                        const ext  = file.name.split('.').pop();
-                        const path = `templates/${userId}/${Date.now()}.${ext}`;
-                        const { error: upErr } = await supabase.storage
-                          .from('templates')
-                          .upload(path, file, { upsert: true });
-                        if (upErr) throw upErr;
-                        const { data: { publicUrl } } = supabase.storage.from('templates').getPublicUrl(path);
-                        setForm(f => ({ ...f, template_image_url: publicUrl }));
-                        setTemplateImageUrl(publicUrl);
-                        setMsg('success:Şablon yüklendi!');
-                      } catch (err) {
-                        setMsg('error:Yükleme hatası: ' + err.message);
-                      }
-                    }}
+  const file = e.target.files[0];
+  if (!file) return;
+  setMsg('success:Yükleniyor...');
+  try {
+    // EĞER DOSYA SVG İSE KOORDİNATLARI OKU:
+    if (file.name.endsWith('.svg') || file.type === 'image/svg+xml') {
+      const text = await file.text();
+      const doc = new DOMParser().parseFromString(text, 'image/svg+xml');
+      const svgEl = doc.querySelector('svg');
+      // Printify'da baskı alanı genelde id="print-area" olarak etiketlidir
+      const printRect = doc.getElementById('print-area') || doc.querySelector('rect'); 
+      
+      if (printRect && svgEl) {
+        const viewBox = svgEl.getAttribute('viewBox')?.split(' ');
+        setForm(f => ({
+          ...f,
+          svg_width: parseFloat(viewBox ? viewBox[2] : svgEl.getAttribute('width')),
+          svg_height: parseFloat(viewBox ? viewBox[3] : svgEl.getAttribute('height')),
+          print_area_x: parseFloat(printRect.getAttribute('x')),
+          print_area_y: parseFloat(printRect.getAttribute('y')),
+          print_area_w: parseFloat(printRect.getAttribute('width')),
+          print_area_h: parseFloat(printRect.getAttribute('height'))
+        }));
+        setMsg('success:SVG Koordinatları otomatik algılandı!');
+      }
+    }
+
+    // Dosyayı Supabase Storage'a Yükleme (Mevcut kodun)
+    const ext  = file.name.split('.').pop();
+    const path = `templates/${userId}/${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage
+      .from('templates')
+      .upload(path, file, { upsert: true });
+    if (upErr) throw upErr;
+    
+    const { data: { publicUrl } } = supabase.storage.from('templates').getPublicUrl(path);
+    setForm(f => ({ ...f, template_image_url: publicUrl }));
+    setTemplateImageUrl(publicUrl);
+  } catch (err) {
+    setMsg('error:Yükleme hatası: ' + err.message);
+  }
+}}
                   />
                 </label>
               </div>

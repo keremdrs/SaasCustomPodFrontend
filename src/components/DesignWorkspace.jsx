@@ -4,6 +4,33 @@ import { supabase } from '../lib/supabase';
 import TemplateGallery   from './TemplateGallery';
 import BackgroundGallery from './BackgroundGallery';
 
+
+// FLUX PuLID destekli en-boy oranları (FLUX.1 multiples of 8 uyumlu)
+const ASPECT_OPTIONS = [
+  { id: '1:1',  label: '1:1',  width: 1344, height: 1344 }, // max 1344 (1536'ya yakın kare)
+  { id: '4:3',  label: '4:3',  width: 1536, height: 1152 }, // 1536 max genişlik
+  { id: '3:4',  label: '3:4',  width: 1152, height: 1536 }, // 1536 max yükseklik
+  { id: '16:9', label: '16:9', width: 1536, height: 864  }, // 16:9 tam oran
+  { id: '9:16', label: '9:16', width: 864,  height: 1536 },
+  { id: '2:1',  label: '2:1',  width: 1536, height: 768  }, // kupa için ideal
+  { id: '1:2',  label: '1:2',  width: 768,  height: 1536 },
+];
+
+// Ürünün print oranına göre en yakın aspect'i bul
+function suggestAspect(printW, printH) {
+  if (!printW || !printH) return '1:1';
+  const ratio = printW / printH;
+  if (ratio >= 1.85) return '2:1';
+  if (ratio >= 1.55) return '16:9';
+  if (ratio >= 1.20) return '4:3';
+  if (ratio >= 0.85) return '1:1';
+  if (ratio >= 0.65) return '3:4';
+  if (ratio >= 0.50) return '9:16';
+  return '1:2';
+}
+
+
+
 const API = 'https://saascustompod.onrender.com';
 
 const CREDIT_COST = { standard: 2, premium: 5, mockup: 1 };
@@ -40,11 +67,14 @@ export default function DesignWorkspace({
   const [isMockupLoading,    setIsMockupLoading]    = useState(false);
   const [error,              setError]              = useState('');
   const [previousImages,     setPreviousImages]     = useState([]); // önceki AI görselleri
-
+  const [selectedAspect, setSelectedAspect] = useState('1:1');
   // Drag
   const isDragging   = useRef(false);
   const dragStart    = useRef({ x: 0, y: 0 });
-  const konvaEditorRef = useRef(null);   // imperative API: { exportDesign, reset }
+  const konvaEditorRef = useRef(null);
+const fileInputRef   = useRef(null);
+const [addingLayer,    setAddingLayer]    = useState(false);
+const [cachedPrintB64, setCachedPrintB64] = useState(null);   // ← yeni
 
 
   // Önceki AI görsellerini yükle — order bazlı
@@ -83,9 +113,9 @@ export default function DesignWorkspace({
       const list = products || [];
 
       // Her ürün için blueprint_templates'den template bilgisi çek
-      const enriched = await Promise.all(sellerProducts.map(async p => {
+      const enriched = await Promise.all(list.map(async p => {
   // Aynı blueprint için tüm template'leri tek seferde çek (1 query)
-  const { data: candidates } = await supabase
+      const { data: candidates } = await supabase
     .from('blueprint_templates')
     .select('template_url, svg_width, svg_height, provider_id, variant_id, print_width, print_height, print_area_x, print_area_y, print_area_w, print_area_h')
     .eq('blueprint_id', p.blueprint_id);
@@ -125,6 +155,16 @@ export default function DesignWorkspace({
     loadProducts();
   }, [userId, activeOrder?.id]);
 
+// Ürün değişince önerilen aspect'i auto-seç
+useEffect(() => {
+  if (selectedProduct?.print_width && selectedProduct?.print_height) {
+    setSelectedAspect(
+      suggestAspect(selectedProduct.print_width, selectedProduct.print_height)
+    );
+  }
+}, [selectedProduct?.id]);
+
+
   if (!activeOrder) return null;
 
   const product = selectedProduct || DEFAULT_PRODUCT;
@@ -153,16 +193,20 @@ export default function DesignWorkspace({
       const controller = new AbortController();
       const tid = setTimeout(() => controller.abort(), TIMEOUT);
 
-      const res = await fetch(`${API}/api/generate-v2`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userFaceUrl:         activeOrder.source_image_url,
-          templateFixedPrompt: selectedTemplate.fixed_prompt,
-          qualityTier:         tier,
-        }),
-        signal: controller.signal,
-      });
+    const aspectCfg = ASPECT_OPTIONS.find(a => a.id === selectedAspect) || ASPECT_OPTIONS[0];
+
+const res = await fetch(`${API}/api/generate-v2`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    userFaceUrl:         activeOrder.source_image_url,
+    templateFixedPrompt: selectedTemplate.fixed_prompt,
+    qualityTier:         tier,
+    width:               aspectCfg.width,
+    height:              aspectCfg.height,
+  }),
+  signal: controller.signal,
+});
       clearTimeout(tid);
 
       if (!res.ok) throw new Error(`Sunucu hatası: ${res.status}`);
@@ -224,6 +268,7 @@ export default function DesignWorkspace({
       ]);
       setTextureOffset({ x: 0.5, y: 0.5 });
       setTextureScale(1);
+      setCachedPrintB64(null); 
       setUiState(UI.READY);
       setProcessingMsg('');
     } catch (err) {
@@ -232,6 +277,54 @@ export default function DesignWorkspace({
     }
   };
 
+
+  const handleAddLayerFile = async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';   // aynı dosyayı tekrar seçilebilir hale getir
+  if (!file) return;
+
+  // Boyut kontrolü (max 10MB)
+  if (file.size > 10 * 1024 * 1024) {
+    setError('Görsel 10MB\'tan büyük olamaz.');
+    return;
+  }
+  if (!file.type.startsWith('image/')) {
+    setError('Sadece görsel dosyaları kabul edilir.');
+    return;
+  }
+
+  setAddingLayer(true);
+  setError('');
+
+  try {
+    // Supabase storage'a yükle
+    const ext  = file.name.split('.').pop().toLowerCase();
+    const path = `layers/${userId}/${activeOrder.id}_${Date.now()}.${ext}`;
+
+    const { error: upErr } = await supabase.storage
+      .from('orders')
+      .upload(path, file, {
+        contentType: file.type,
+        upsert: false,
+      });
+    if (upErr) throw upErr;
+
+    const { data: { publicUrl } } = supabase.storage
+      .from('orders').getPublicUrl(path);
+
+    // Konva editörüne yeni katman olarak ekle
+    if (konvaEditorRef.current?.addLayer) {
+      await konvaEditorRef.current.addLayer(publicUrl);
+    }
+  } catch (err) {
+    setError('Görsel eklenemedi: ' + err.message);
+  } finally {
+    setAddingLayer(false);
+  }
+};
+
+
+
   // ── Baskı dosyası üret — Konva stage'den export ─────────────
  const generatePrintFile = () => new Promise((resolve, reject) => {
   const api = konvaEditorRef.current;
@@ -239,61 +332,87 @@ export default function DesignWorkspace({
     try {
       const dataURL = api.exportDesign();
       if (dataURL && dataURL.startsWith('data:')) return resolve(dataURL);
-    } catch(e) { console.warn('Konva export hatası:', e); }
+    } catch (e) {
+      console.warn('Konva export hatası:', e);
+    }
   }
   reject(new Error('Tasarım editörü hazır değil. Lütfen görseli editörde konumlandırın.'));
 });
 
     // ── Mockup oluştur ────────────────────────────────────────
   const handleConfirm = async () => {
-    if (profile.credits < CREDIT_COST.mockup) {
-      setError(`Mockup oluşturmak ${CREDIT_COST.mockup} kredi gerektiriyor.`);
-      return;
-    }
-    setUiState(UI.CONFIRM_ORDER);
-    setIsMockupLoading(true);
-    setError('');
-    try {
-      const b64 = await generatePrintFile();
-      const res  = await fetch(`${API}/api/generate-mockup`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          image:             b64,
-          productId:         product.id,
-          user_id:           userId,
-          seller_product_id: product.id !== '11oz' && product.id !== '15oz' ? product.id : null,
-        }),
-      });
-      const data = await res.json();
-      if (!data.mockups?.length) throw new Error(data.error || 'Mockup oluşturulamadı');
+  if (profile.credits < CREDIT_COST.mockup) {
+    setError(`Mockup oluşturmak ${CREDIT_COST.mockup} kredi gerektiriyor.`);
+    return;
+  }
+  setError('');
 
-      // Başarılı → kredi düş
-      await supabase.rpc('deduct_credits', {
-        p_user_id:    userId,
-        p_amount:     CREDIT_COST.mockup,
-        p_type:       'mockup',
-        p_description:`Mockup — ${activeOrder.etsy_order_no}`,
-        p_order_id:   activeOrder.id,
-      });
-      await onRefreshProfile();
-      setMockups(data.mockups);
-    } catch (err) {
-      setError('Mockup hatası: ' + err.message);
-      setUiState(UI.READY);
-    }
-    setIsMockupLoading(false);
-  };
+  // ÖNCE export — editor hâlâ mount'tayken
+  let b64;
+  try {
+    b64 = await generatePrintFile();
+    setCachedPrintB64(b64);   // Approval gönderimi için sakla
+  } catch (err) {
+    setError('Tasarım dosyası alınamadı: ' + err.message);
+    return;
+  }
+
+  // ŞİMDİ state değiştir — editor unmount olsa da b64 elimizde
+  setUiState(UI.CONFIRM_ORDER);
+  setIsMockupLoading(true);
+
+  try {
+    const res = await fetch(`${API}/api/generate-mockup`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image:             b64,
+        productId:         product.id,
+        user_id:           userId,
+        seller_product_id: product.id !== '11oz' && product.id !== '15oz' ? product.id : null,
+      }),
+    });
+    const data = await res.json();
+    if (!data.mockups?.length) throw new Error(data.error || 'Mockup oluşturulamadı');
+
+    // Başarılı → kredi düş
+    await supabase.rpc('deduct_credits', {
+      p_user_id:    userId,
+      p_amount:     CREDIT_COST.mockup,
+      p_type:       'mockup',
+      p_description:`Mockup — ${activeOrder.etsy_order_no}`,
+      p_order_id:   activeOrder.id,
+    });
+    await onRefreshProfile();
+    setMockups(data.mockups);
+  } catch (err) {
+    setError('Mockup hatası: ' + err.message);
+    setUiState(UI.READY);
+  }
+  setIsMockupLoading(false);
+};
+
+const handleDownloadPrintFile = () => {
+  if (!cachedPrintB64) { setError('Baskı dosyası hazır değil.'); return; }
+  const a = document.createElement('a');
+  a.href     = cachedPrintB64;
+ a.download = `baski_${activeOrder?.etsy_order_no || 'tasarim'}_${product?.print_width ?? ''}x${product?.print_height ?? ''}.jpg`;
+  a.click();
+};
+
 
   // ── Müşteriye gönder ──────────────────────────────────────
   const handleSendToCustomer = async () => {
-    try {
-      const b64 = await generatePrintFile();
-      await onSendForApproval(b64, mockups);
-    } catch (err) {
-      setError('Gönderim hatası: ' + err.message);
-    }
-  };
+  try {
+    // Cache'den oku (handleConfirm'de zaten üretildi)
+    // Yoksa son çare olarak yeniden üret (editor hâlâ mount'taysa)
+    const b64 = cachedPrintB64 || await generatePrintFile();
+    if (!b64) throw new Error('Baskı dosyası bulunamadı.');
+    await onSendForApproval(b64, mockups);
+  } catch (err) {
+    setError('Gönderim hatası: ' + err.message);
+  }
+};
 
 
 
@@ -331,43 +450,63 @@ export default function DesignWorkspace({
       {/* ── IDLE ── */}
       {uiState === UI.IDLE && (
         <>
-          {/* Ürün seçimi */}
-          {sellerProducts.length > 0 && (
-            <div style={{ marginBottom: 20 }}>
-              <div className="label" style={{ marginBottom: 10 }}>Select Product</div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {sellerProducts.map(p => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => setSelectedProduct(p)}
-                    style={{
-                      padding: '8px 16px',
-                      borderRadius: 8,
-                      border: selectedProduct?.id === p.id
-                        ? '2px solid var(--brand)'
-                        : '1px solid var(--border-light)',
-                      background: selectedProduct?.id === p.id
-                        ? 'rgba(245,100,0,0.1)'
-                        : 'var(--bg)',
-                      color: selectedProduct?.id === p.id ? 'var(--brand)' : 'var(--text)',
-                      fontWeight: 600,
-                      fontSize: 13,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {p.name}
-                  </button>
-                ))}
-              </div>
-              {selectedProduct && (
-                <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6 }}>
-                  Print area: {selectedProduct.print_width}×{selectedProduct.print_height}px ·
-                  Blueprint {selectedProduct.blueprint_id} · Variant {selectedProduct.variant_id}
-                </div>
-              )}
+         {sellerProducts && sellerProducts.length > 1 && (
+  <div style={{ marginBottom: 16 }}>
+    <div className="label" style={{ marginBottom: 8 }}>
+      Hangi ürün için tasarım?
+    </div>
+    <div style={{
+      display: 'flex', gap: 10, overflowX: 'auto',
+      paddingBottom: 4, scrollbarWidth: 'thin',
+    }}>
+      {sellerProducts.map(p => {
+        const isActive = selectedProduct?.id === p.id;
+        return (
+          <button
+            key={p.id}
+            onClick={() => setSelectedProduct(p)}
+            type="button"
+            style={{
+              flex: '0 0 auto',
+              minWidth: 130,
+              padding: '10px 14px',
+              background: isActive ? 'var(--brand)' : 'var(--bg-card)',
+              color:      isActive ? '#fff' : 'var(--text)',
+              border: isActive
+                ? '2px solid var(--brand)'
+                : '1px solid var(--border)',
+              borderRadius: 'var(--radius-sm)',
+              cursor: 'pointer',
+              fontFamily: 'var(--font-body)',
+              textAlign: 'left',
+              transition: 'all 0.15s',
+              boxShadow: isActive ? 'var(--shadow)' : 'none',
+            }}
+          >
+            <div style={{
+              fontSize: 13, fontWeight: 700,
+              marginBottom: 2,
+            }}>
+              {p.name}
             </div>
-          )}
+            <div style={{
+              fontSize: 11,
+              opacity: isActive ? 0.85 : 0.6,
+            }}>
+              {p.print_width}×{p.print_height}px
+              {p.variant_id && ` · var ${p.variant_id}`}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+    {selectedProduct && (
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>
+        Aşağıdaki AI stilini seçtikten sonra bu ürün için tasarım üretilecek.
+      </div>
+    )}
+  </div>
+)}
 
           {/* Önceki AI görselleri */}
           {previousImages.length > 0 && (
@@ -428,63 +567,7 @@ export default function DesignWorkspace({
 
 
           {/* Ürün Seçici — birden fazla ürün varsa göster */}
-{sellerProducts && sellerProducts.length > 1 && (
-  <div style={{ marginBottom: 16 }}>
-    <div className="label" style={{ marginBottom: 8 }}>
-      Hangi ürün için tasarım?
-    </div>
-    <div style={{
-      display: 'flex', gap: 10, overflowX: 'auto',
-      paddingBottom: 4, scrollbarWidth: 'thin',
-    }}>
-      {sellerProducts.map(p => {
-        const isActive = selectedProduct?.id === p.id;
-        return (
-          <button
-            key={p.id}
-            onClick={() => setSelectedProduct(p)}
-            type="button"
-            style={{
-              flex: '0 0 auto',
-              minWidth: 130,
-              padding: '10px 14px',
-              background: isActive ? 'var(--brand)' : 'var(--bg-card)',
-              color:      isActive ? '#fff' : 'var(--text)',
-              border: isActive
-                ? '2px solid var(--brand)'
-                : '1px solid var(--border)',
-              borderRadius: 'var(--radius-sm)',
-              cursor: 'pointer',
-              fontFamily: 'var(--font-body)',
-              textAlign: 'left',
-              transition: 'all 0.15s',
-              boxShadow: isActive ? 'var(--shadow)' : 'none',
-            }}
-          >
-            <div style={{
-              fontSize: 13, fontWeight: 700,
-              marginBottom: 2,
-            }}>
-              {p.name}
-            </div>
-            <div style={{
-              fontSize: 11,
-              opacity: isActive ? 0.85 : 0.6,
-            }}>
-              {p.print_width}×{p.print_height}px
-              {p.variant_id && ` · var ${p.variant_id}`}
-            </div>
-          </button>
-        );
-      })}
-    </div>
-    {selectedProduct && (
-      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>
-        Aşağıdaki AI stilini seçtikten sonra bu ürün için tasarım üretilecek.
-      </div>
-    )}
-  </div>
-)}
+
 
 {/* Tek ürün varsa, sadece bilgi göster */}
 {sellerProducts && sellerProducts.length === 1 && selectedProduct && (
@@ -523,25 +606,124 @@ export default function DesignWorkspace({
           />
 
           {selectedTemplate && (
-            <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
-              <button
-                className="btn"
-                style={{ flex: 1, background: '#374151', color: '#fff' }}
-                onClick={() => handleStartAI('standard')}
-                disabled={profile.credits < CREDIT_COST.standard}
-              >
-                ⚡ Standard — {CREDIT_COST.standard} credits
-              </button>
-              <button
-                className="btn"
-                style={{ flex: 1, background: '#7c3aed', color: '#fff' }}
-                onClick={() => handleStartAI('premium')}
-                disabled={profile.credits < CREDIT_COST.premium}
-              >
-                🎨 Premium FLUX — {CREDIT_COST.premium} credits
-              </button>
-            </div>
-          )}
+  <>
+    {/* En-Boy Oranı Seçici (Premium için) */}
+    <div style={{ marginTop: 14 }}>
+      <div className="label" style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span>📐 Premium FLUX en-boy oranı</span>
+        <span style={{
+          fontSize: 10, color: 'var(--text-dim)',
+          background: 'var(--bg-hover)', padding: '2px 6px',
+          borderRadius: 10, fontWeight: 500,
+        }}>
+          sadece Premium
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {ASPECT_OPTIONS.map(a => {
+          const isActive = selectedAspect === a.id;
+          const isRecommended = selectedProduct
+            ? suggestAspect(selectedProduct.print_width, selectedProduct.print_height) === a.id
+            : false;
+
+          // Mini ikon — orantılı dikdörtgen
+          const iconAspect = a.width / a.height;
+          const iconW = iconAspect >= 1 ? 22 : 22 * iconAspect;
+          const iconH = iconAspect >= 1 ? 22 / iconAspect : 22;
+
+          return (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => setSelectedAspect(a.id)}
+              style={{
+                position: 'relative',
+                minWidth: 64,
+                padding: '8px 10px',
+                background: isActive ? 'var(--brand)' : 'var(--bg-card)',
+                color: isActive ? '#fff' : 'var(--text)',
+                border: isActive
+                  ? '2px solid var(--brand)'
+                  : isRecommended
+                    ? '2px solid var(--success)'
+                    : '1px solid var(--border)',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontFamily: 'var(--font-body)',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 4,
+                transition: 'all 0.15s',
+              }}
+            >
+              <div style={{
+                width: iconW, height: iconH,
+                background: isActive ? 'rgba(255,255,255,0.85)' : 'var(--text-muted)',
+                borderRadius: 2,
+                transition: 'background 0.15s',
+              }} />
+              <span>{a.label}</span>
+              {isRecommended && !isActive && (
+                <div style={{
+                  position: 'absolute', top: -6, right: -6,
+                  background: 'var(--success)', color: '#000',
+                  fontSize: 8, fontWeight: 700,
+                  padding: '2px 5px', borderRadius: 4,
+                  letterSpacing: 0.3,
+                }}>
+                  ÖNERİ
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Açıklama satırı */}
+      {(() => {
+        const cfg = ASPECT_OPTIONS.find(a => a.id === selectedAspect);
+        const recommended = selectedProduct
+          ? suggestAspect(selectedProduct.print_width, selectedProduct.print_height)
+          : null;
+        const mismatch = recommended && recommended !== selectedAspect;
+        return (
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 8, lineHeight: 1.5 }}>
+            FLUX <strong>{cfg.width}×{cfg.height}</strong> piksel üretir.
+            Editörde print area'ya göre kırpılır.
+            {mismatch && selectedProduct && (
+              <span style={{ color: 'var(--warning)' }}>
+                {' '}· Bu ürün için <strong>{recommended}</strong> oranı daha uyumlu
+                ({selectedProduct.print_width}×{selectedProduct.print_height}px).
+              </span>
+            )}
+          </div>
+        );
+      })()}
+    </div>
+
+    <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+      <button
+        className="btn"
+        style={{ flex: 1, background: '#374151', color: '#fff' }}
+        onClick={() => handleStartAI('standard')}
+        disabled={profile.credits < CREDIT_COST.standard}
+      >
+        ⚡ Standard — {CREDIT_COST.standard} credits
+      </button>
+      <button
+        className="btn"
+        style={{ flex: 1, background: '#7c3aed', color: '#fff' }}
+        onClick={() => handleStartAI('premium')}
+        disabled={profile.credits < CREDIT_COST.premium}
+      >
+        🎨 Premium FLUX {selectedAspect} — {CREDIT_COST.premium} credits
+      </button>
+    </div>
+  </>
+)}
         </>
       )}
 
@@ -571,6 +753,34 @@ export default function DesignWorkspace({
       </div>
     )}
 
+
+    {/* Editör araç çubuğu */}
+<div style={{
+  display: 'flex', justifyContent: 'center', gap: 8,
+  marginBottom: 10, flexWrap: 'wrap',
+}}>
+  <button
+    type="button"
+    className="btn btn-secondary"
+    style={{ fontSize: 12, padding: '6px 14px' }}
+    disabled={addingLayer}
+    onClick={() => fileInputRef.current?.click()}
+  >
+    {addingLayer ? '⏳ Yükleniyor...' : '➕ Görsel Ekle'}
+  </button>
+
+  <input
+    ref={fileInputRef}
+    type="file"
+    accept="image/png,image/jpeg,image/webp"
+    style={{ display: 'none' }}
+    onChange={handleAddLayerFile}
+  />
+</div>
+
+
+    
+
     {/* Tek editör — PNG template üst katman */}
     <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
       <KonvaDesignArea
@@ -591,19 +801,37 @@ export default function DesignWorkspace({
       />
     </div>
 
-    <div style={{ display: 'flex', gap: 10 }}>
-      <button className="btn btn-secondary" onClick={() => setUiState(UI.IDLE)}>
-        ← Regenerate
-      </button>
-      <button
-        className="btn btn-primary"
-        style={{ flex: 1 }}
-        onClick={handleConfirm}
-        disabled={profile.credits < CREDIT_COST.mockup}
-      >
-        Generate Mockup ({CREDIT_COST.mockup} credit)
-      </button>
-    </div>
+    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+  <button className="btn btn-secondary" onClick={() => { setCachedPrintB64(null); setUiState(UI.IDLE); }}>
+    ← Regenerate
+  </button>
+  <button
+    className="btn btn-secondary"
+    title={`${product?.print_width}×${product?.print_height}px baskı dosyasını indir`}
+    style={{ color: 'var(--success)', borderColor: 'var(--success)' }}
+    onClick={async () => {
+      try {
+        const b64 = await generatePrintFile();
+        const a = document.createElement('a');
+        a.href     = b64;
+        a.download = `baski_${activeOrder?.etsy_order_no || 'tasarim'}_${product?.print_width ?? ''}x${product?.print_height ?? ''}.jpg`;
+        a.click();
+      } catch (err) {
+        setError('İndirme hatası: ' + err.message);
+      }
+    }}
+  >
+    ⬇ İndir
+  </button>
+  <button
+    className="btn btn-primary"
+    style={{ flex: 1 }}
+    onClick={handleConfirm}
+    disabled={profile.credits < CREDIT_COST.mockup}
+  >
+    Generate Mockup ({CREDIT_COST.mockup} credit)
+  </button>
+</div>
   </>
 )}
 
@@ -625,14 +853,23 @@ export default function DesignWorkspace({
                   />
                 ))}
               </div>
-              <div style={{ display: 'flex', gap: 10 }}>
-                <button className="btn btn-secondary" onClick={() => setUiState(UI.READY)}>
-                  ← Back
-                </button>
-                <button className="btn btn-primary" onClick={handleSendToCustomer}>
-                  📤 Send for Customer Approval
-                </button>
-              </div>
+             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
+  <button className="btn btn-secondary" onClick={() => setUiState(UI.READY)}>
+    ← Back
+  </button>
+  <button
+    className="btn btn-secondary"
+    onClick={handleDownloadPrintFile}
+    disabled={!cachedPrintB64}
+    title={`${product?.print_width}×${product?.print_height}px — Printify baskı dosyası`}
+    style={{ color: 'var(--success)', borderColor: 'var(--success)' }}
+  >
+    ⬇ Baskı Dosyası İndir
+  </button>
+  <button className="btn btn-primary" onClick={handleSendToCustomer}>
+    📤 Send for Customer Approval
+  </button>
+</div>
             </>
           )}
         </div>

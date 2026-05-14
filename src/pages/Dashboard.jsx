@@ -7,7 +7,7 @@ import DesignWorkspace from '../components/DesignWorkspace';
 import ShippingModal          from '../components/ShippingModal';
 import AdminTemplateManager  from '../components/AdminTemplateManager';
 import '../index.css';
-
+import AdminPromptTemplateManager from '../components/AdminPromptTemplateManager';  // ← yeni
 const UI = {
   IDLE:          'IDLE',
   PROCESSING:    'PROCESSING',
@@ -76,7 +76,8 @@ export default function Dashboard() {
   const [approvalLink,   setApprovalLink]   = useState('');
   const [errorMsg,       setErrorMsg]       = useState('');
   const [shippingOrder,      setShippingOrder]      = useState(null);
-  const [showTemplateAdmin, setShowTemplateAdmin] = useState(false);
+  const [showTemplateAdmin,        setShowTemplateAdmin]        = useState(false);
+  const [showPromptTemplateAdmin,  setShowPromptTemplateAdmin]  = useState(false);
   const [adminPrintifyToken, setAdminPrintifyToken] = useState(null);
 
   // ── Veri yükle ────────────────────────────────────────────
@@ -221,13 +222,21 @@ export default function Dashboard() {
         )}
 
         {profile?.is_super_admin && (
-          <button
-            onClick={() => setShowTemplateAdmin(true)}
-            style={{ ...s.signOut, color: 'var(--brand)', borderColor: 'var(--brand)', marginBottom: 4 }}
-          >
-            🎨 Template Admin
-          </button>
-        )}
+  <>
+    <button
+      onClick={() => setShowTemplateAdmin(true)}
+      style={{ ...s.signOut, color: 'var(--brand)', borderColor: 'var(--brand)', marginBottom: 4 }}
+    >
+      🖨️ Blueprint Templates
+    </button>
+    <button
+      onClick={() => setShowPromptTemplateAdmin(true)}
+      style={{ ...s.signOut, color: 'var(--brand)', borderColor: 'var(--brand)', marginBottom: 4 }}
+    >
+      🎨 AI Stil Şablonları
+    </button>
+  </>
+)}
         <button onClick={signOut} style={s.signOut}>Çıkış Yap</button>
       </aside>
 
@@ -258,6 +267,8 @@ export default function Dashboard() {
           onProcess={handleProcessOrder}
           onOpenShipping={setShippingOrder}
           onRefresh={fetchAll}
+          userId={user.id}
+  onShip={(order) => setShippingOrder(order)}
         />
 
         {/* Boş durum */}
@@ -320,6 +331,11 @@ export default function Dashboard() {
       {/* ShippingModal */}
       {showTemplateAdmin && (
         <AdminTemplateManager onClose={() => setShowTemplateAdmin(false)} />
+      )}
+      {showPromptTemplateAdmin && profile?.is_super_admin && (
+        <AdminPromptTemplateManager
+          onClose={() => { setShowPromptTemplateAdmin(false); fetchAll(); }}
+        />
       )}
 
       {shippingOrder && (

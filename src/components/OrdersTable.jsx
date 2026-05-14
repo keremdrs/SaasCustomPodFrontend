@@ -8,7 +8,7 @@ const STATUS_LABEL = {
   tamamlandi:    'Tamamlandı',
 };
 
-export default function OrdersTable({ orders, activeOrderId, onProcess, onRefresh, userId }) {
+export default function OrdersTable({ orders, activeOrderId, onProcess, onRefresh, userId, onShip }) {
   if (!orders.length) return (
     <div className="card" style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)', fontSize: 14, marginBottom: 20 }}>
       Henüz sipariş yok. Müşteri sayfanı paylaşmaya başla!
@@ -21,10 +21,9 @@ export default function OrdersTable({ orders, activeOrderId, onProcess, onRefres
     alert('🔗 Onay linki kopyalandı!');
   };
 
-  const handleSendToPrintify = async (order) => {
-    // Kargo bilgisi alınacak, şimdilik placeholder
-    alert('Printify gönderimi Ayarlar sayfasındaki Printify token\'ı gerektiriyor.');
-  };
+  const handleSendToPrintify = (order) => {
+  if (onShip) onShip(order);
+};
 
   return (
     <div className="card" style={{ marginBottom: 24, padding: 0, overflow: 'hidden' }}>
