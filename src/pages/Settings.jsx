@@ -260,7 +260,7 @@ export default function Settings() {
             <div className="form-group">
               <label className="label">Mağaza Adresi</label>
               <div style={{ display: 'flex' }}>
-                <span style={s.slugPrefix}>{window.location.origin}/</span>
+                <span style={s.slugPrefix}>{window.location.host}/</span>
                 <input
                   className="input"
                   style={{ borderRadius: '0 var(--radius-sm) var(--radius-sm) 0', borderLeft: 'none' }}

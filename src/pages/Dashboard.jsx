@@ -153,7 +153,7 @@ export default function Dashboard() {
       print_file_url: publicUrl,
     }).eq('id', activeOrder.id);
 
-    const link = `${window.location.origin}/onay/${activeOrder.id}`;
+    const link = `${window.location.host}/onay/${activeOrder.id}`;
     setApprovalLink(link);
     setUiState(UI.LINK_READY);
     fetchAll();
@@ -212,7 +212,7 @@ export default function Dashboard() {
             <button
               style={s.copyBtn}
               onClick={() => {
-                navigator.clipboard.writeText(`${window.location.origin}/${profile.shop_slug}`);
+                navigator.clipboard.writeText(`${window.location.host}/${profile.shop_slug}`);
                 alert('Link kopyalandı!');
               }}
             >

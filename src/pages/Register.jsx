@@ -27,7 +27,7 @@ export default function Register() {
     const { error: err } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/dashboard`,
+        redirectTo: `${window.location.host}/dashboard`,
       },
     });
     if (err) {

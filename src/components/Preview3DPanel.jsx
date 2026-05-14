@@ -3,7 +3,7 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import Mug3D from './Mug3D';
 
-const API = 'https://case-designer-api.onrender.com';
+const API = 'https://saascustompod.onrender.com';
 
 export default function Preview3DPanel({
   finalImageUrl,
