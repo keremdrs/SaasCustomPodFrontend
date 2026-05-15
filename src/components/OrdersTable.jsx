@@ -8,7 +8,7 @@ const STATUS_LABEL = {
   tamamlandi:    'Tamamlandı',
 };
 
-export default function OrdersTable({ orders, activeOrderId, onProcess, onRefresh, userId, onShip }) {
+export default function OrdersTable({ orders, activeOrderId, onProcess, onRefresh, userId }) {
   if (!orders.length) return (
     <div className="card" style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)', fontSize: 14, marginBottom: 20 }}>
       Henüz sipariş yok. Müşteri sayfanı paylaşmaya başla!
@@ -21,9 +21,14 @@ export default function OrdersTable({ orders, activeOrderId, onProcess, onRefres
     alert('🔗 Onay linki kopyalandı!');
   };
 
-  const handleSendToPrintify = (order) => {
-  if (onShip) onShip(order);
-};
+  // Yüksek çözünürlüklü basıma hazır dosyayı indirir / açar
+  const handleDownload = (url) => {
+    if (!url) {
+      alert('İndirilecek dosya bulunamadı.');
+      return;
+    }
+    window.open(url, '_blank');
+  };
 
   return (
     <div className="card" style={{ marginBottom: 24, padding: 0, overflow: 'hidden' }}>
@@ -36,7 +41,7 @@ export default function OrdersTable({ orders, activeOrderId, onProcess, onRefres
         <table className="table">
           <thead>
             <tr>
-              <th>Sipariş No</th>
+              <th>Etsy Sipariş No</th>
               <th>Müşteri</th>
               <th>Durum</th>
               <th>Tarih</th>
@@ -48,7 +53,10 @@ export default function OrdersTable({ orders, activeOrderId, onProcess, onRefres
               <tr key={o.id} style={{
                 background: activeOrderId === o.id ? 'rgba(245, 100, 0, 0.07)' : 'transparent'
               }}>
-                <td style={{ fontWeight: 600 }}>#{o.etsy_order_no}</td>
+                {/* Doğrudan Etsy Sipariş Numarası gösteriliyor */}
+                <td style={{ fontWeight: 600, fontFamily: 'monospace', color: 'var(--brand)' }}>
+                  #{o.etsy_order_no || 'Belirtilmedi'}
+                </td>
                 <td>{o.customer_name}</td>
                 <td>
                   <span className={`badge badge-${o.status}`}>
@@ -78,13 +86,14 @@ export default function OrdersTable({ orders, activeOrderId, onProcess, onRefres
                       </button>
                     )}
 
+                    {/* Sipariş onaylandıysa "İndir" butonu aktif olur */}
                     {o.status === 'onaylandi' && (
                       <button
                         className="btn btn-success"
                         style={{ fontSize: 12, padding: '5px 10px' }}
-                        onClick={() => handleSendToPrintify(o)}
+                        onClick={() => handleDownload(o.print_file_url)}
                       >
-                        🚀 Printify
+                        ⬇️ İndir
                       </button>
                     )}
                   </div>

@@ -5,206 +5,164 @@ import '../index.css';
 
 export default function CustomerApproval() {
   const { orderId } = useParams();
-  const [order,     setOrder]     = useState(null);
-  const [loading,   setLoading]   = useState(true);
-  const [errorMsg,  setErrorMsg]  = useState('');
+  const [order, setOrder] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  
+  const [revizeNotu, setRevizeNotu] = useState('');
+  const [showRevize, setShowRevize] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const [isApproving,     setIsApproving]     = useState(false);
-  const [isApproved,      setIsApproved]      = useState(false);
-  const [showRejectForm,  setShowRejectForm]  = useState(false);
-  const [rejectNote,      setRejectNote]      = useState('');
-  const [isRejecting,     setIsRejecting]     = useState(false);
-  const [isRejected,      setIsRejected]      = useState(false);
-
+  // Siparişi getir
   useEffect(() => {
-    supabase
-      .from('orders')
-      .select('*')
-      .eq('id', orderId)
-      .maybeSingle()
-      .then(({ data, error }) => {
-        if (error || !data) setErrorMsg('Sipariş bulunamadı.');
-        else {
-          setOrder(data);
-          if (data.status === 'onaylandi' || data.status === 'tamamlandi') setIsApproved(true);
-        }
+    const fetchOrder = async () => {
+      try {
+        const { data, error: fetchErr } = await supabase
+          .from('orders')
+          // profiles tablosundan shop_name'i de alıyoruz ki sayfada satıcının dükkan adı görünsün
+          .select('id, etsy_order_no, status, print_file_url, customer_name, profiles(shop_name)')
+          .eq('id', orderId)
+          .single();
+          
+        if (fetchErr) throw fetchErr;
+        setOrder(data);
+      } catch (err) {
+        setError('Sipariş bulunamadı veya bir hata oluştu.');
+      } finally {
         setLoading(false);
-      });
+      }
+    };
+    fetchOrder();
   }, [orderId]);
 
   const handleApprove = async () => {
-    setIsApproving(true);
-    await supabase.from('orders').update({ status: 'onaylandi' }).eq('id', orderId);
-    setIsApproved(true);
-    setIsApproving(false);
+    setIsSubmitting(true);
+    try {
+      await supabase.from('orders').update({ status: 'onaylandi' }).eq('id', orderId);
+      setOrder({ ...order, status: 'onaylandi' });
+    } catch (err) {
+      alert('Bir hata oluştu.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleReject = async () => {
-    if (!rejectNote.trim()) { alert('Lütfen neyi değiştirmek istediğinizi yazın.'); return; }
-    setIsRejecting(true);
-    await supabase.from('orders').update({
-      status: 'revize',
-      customer_note: rejectNote,
-    }).eq('id', orderId);
-    setIsRejected(true);
-    setIsRejecting(false);
+  const handleRevize = async () => {
+    if (!revizeNotu.trim()) {
+      alert('Lütfen revize isteğinizi yazın.');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      await supabase.from('orders').update({ 
+        status: 'revize',
+        customer_note: revizeNotu 
+      }).eq('id', orderId);
+      setOrder({ ...order, status: 'revize' });
+    } catch (err) {
+      alert('Bir hata oluştu.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  if (loading) return (
-    <div style={styles.page}>
-      <div className="spinner" />
-    </div>
-  );
+  if (loading) return <div style={styles.center}><div className="spinner" /></div>;
+  if (error || !order) return <div style={styles.center}><div className="card">{error}</div></div>;
 
-  if (errorMsg) return (
-    <div style={styles.page}>
-      <div className="alert alert-error" style={{ maxWidth: 400 }}>❌ {errorMsg}</div>
-    </div>
-  );
-
-  if (isApproved) return (
-    <div style={styles.page}>
-      <div className="card" style={styles.resultCard}>
-        <div style={{ fontSize: 56, marginBottom: 16 }}>✅</div>
-        <h2 style={styles.resultTitle}>Tasarım Onaylandı!</h2>
-        <p style={{ color: 'var(--text-muted)', lineHeight: 1.7 }}>
-          Harika! Ürününüzü hemen baskıya gönderiyoruz. Kargonuz yola çıktığında
-          Etsy üzerinden bilgilendirileceksiniz. Bizi tercih ettiğiniz için teşekkürler!
-        </p>
-      </div>
-    </div>
-  );
-
-  if (isRejected) return (
-    <div style={styles.page}>
-      <div className="card" style={{ ...styles.resultCard, borderColor: 'var(--warning)' }}>
-        <div style={{ fontSize: 56, marginBottom: 16 }}>🛠️</div>
-        <h2 style={{ ...styles.resultTitle, color: 'var(--warning)' }}>Talebiniz Alındı!</h2>
-        <p style={{ color: 'var(--text-muted)', lineHeight: 1.7 }}>
-          İstediğiniz değişiklikleri tasarım ekibimize ilettik. En kısa sürede
-          yeni bir önizleme bağlantısı göndereceğiz.
-        </p>
-      </div>
-    </div>
-  );
-
-  return (
-    <div style={styles.page}>
-      <div style={{ maxWidth: 720, width: '100%' }}>
-
-        {/* Başlık */}
-        <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <div style={{ fontSize: 28, marginBottom: 8 }}>🎨</div>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 22, marginBottom: 6 }}>
-            Tasarım Onayı
-          </h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>
-            Merhaba <strong>{order?.customer_name}</strong>,
-            #{order?.etsy_order_no} siparişinize ait tasarımınız hazır!
+  // ── DURUM: ONAYLANDI ──
+  if (order.status === 'onaylandi') {
+    return (
+      <div style={styles.page}>
+        <div className="card" style={styles.card}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>✅</div>
+          <h2 style={styles.title}>Tasarım Onaylandı!</h2>
+          <p style={styles.text}>
+            Teşekkürler {order.customer_name}! <strong>#{order.etsy_order_no}</strong> numaralı siparişinizin tasarımı başarıyla onaylandı ve üretime geçilecek.
           </p>
         </div>
+      </div>
+    );
+  }
 
-        <div className="card">
-          {/* Mockuplar */}
-          <h3 style={{ fontFamily: 'var(--font-display)', marginBottom: 16, color: 'var(--info)' }}>
-            📸 Yaşam Alanı Görünümleri
-          </h3>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center', marginBottom: 24 }}>
-            {order?.mockup_urls?.map((url, i) => (
-              <img
-                key={i}
-                src={url}
-                alt={`Mockup ${i+1}`}
-                style={{ width: '100%', maxWidth: 320, borderRadius: 10, boxShadow: 'var(--shadow)' }}
-              />
-            ))}
-          </div>
+  // ── DURUM: REVİZE İSTENDİ ──
+  if (order.status === 'revize') {
+    return (
+      <div style={styles.page}>
+        <div className="card" style={styles.card}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>✏️</div>
+          <h2 style={styles.title}>Revize Talebi Alındı</h2>
+          <p style={styles.text}>
+            Tasarım ekibimiz belirttiğiniz notlar doğrultusunda tasarımınızı güncelleyip size tekrar onaya sunacaktır.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
-          {/* Bilgi kutusu */}
-          <div className="alert alert-info" style={{ marginBottom: 20 }}>
-            <strong>💡 Dikkat:</strong> Gördüğünüz görseller basılacak ürünün dijital provasıdır.
-          </div>
+  // ── DURUM: ONAY BEKLİYOR ──
+  return (
+    <div style={styles.page}>
+      <div className="card" style={{ maxWidth: 600, margin: '0 auto', textAlign: 'center' }}>
+        <h2 style={styles.title}>{order.profiles?.shop_name || 'Tasarım Onayı'}</h2>
+        <p style={styles.text}>
+          Merhaba {order.customer_name}, <strong>#{order.etsy_order_no}</strong> numaralı siparişiniz için hazırladığımız tasarım aşağıdadır.
+        </p>
 
-          {/* Onayla */}
-          <button
-            className="btn btn-success btn-full"
-            onClick={handleApprove}
-            disabled={isApproving || isRejecting}
-            style={{ padding: '16px', fontSize: 16, marginBottom: 12 }}
-          >
-            {isApproving ? '⏳ İşleniyor...' : '✅ TASARIMI ONAYLIYORUM, BASIMA GEÇİLSİN'}
-          </button>
-
-          {/* Reddet */}
-          {!showRejectForm ? (
-            <button
-              className="btn btn-full"
-              onClick={() => setShowRejectForm(true)}
-              disabled={isApproving}
-              style={{ padding: '14px', background: 'transparent', border: '2px solid var(--danger)', color: 'var(--danger)', fontWeight: 700 }}
-            >
-              ❌ Beğenmedim, Değişiklik İste
-            </button>
+        {/* Tasarım Önizlemesi */}
+        <div style={{ margin: '20px 0', border: '1px solid var(--border-light)', borderRadius: 8, padding: 8, background: '#fcfcfc' }}>
+          {order.print_file_url ? (
+            <img src={order.print_file_url} alt="Tasarım Önizlemesi" style={{ width: '100%', borderRadius: 4, display: 'block' }} />
           ) : (
-            <div className="alert alert-warning" style={{ marginTop: 4 }}>
-              <h4 style={{ marginBottom: 10, color: 'var(--warning)' }}>Neyi değiştirmemizi istersiniz?</h4>
-              <textarea
-                value={rejectNote}
-                onChange={e => setRejectNote(e.target.value)}
-                placeholder="Örn: Yüzüm çok büyük, biraz küçültür müsünüz?"
-                style={{
-                  width: '100%', height: 80, padding: 10,
-                  background: 'var(--bg)', border: '1px solid var(--border-light)',
-                  borderRadius: 'var(--radius-sm)', color: 'var(--text)',
-                  fontFamily: 'var(--font-body)', fontSize: 14, resize: 'vertical',
-                  boxSizing: 'border-box',
-                }}
-              />
-              <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-                <button
-                  className="btn btn-secondary"
-                  style={{ flex: 1 }}
-                  onClick={() => setShowRejectForm(false)}
-                >
-                  İptal
-                </button>
-                <button
-                  className="btn btn-danger"
-                  style={{ flex: 2 }}
-                  onClick={handleReject}
-                  disabled={isRejecting}
-                >
-                  {isRejecting ? 'İletiliyor...' : 'Talebi Gönder'}
-                </button>
-              </div>
-            </div>
+            <p style={{ color: 'var(--text-muted)' }}>Tasarım dosyası yüklenemedi.</p>
           )}
         </div>
+
+        {/* Aksiyon Butonları */}
+        {!showRevize ? (
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 20 }}>
+            <button 
+              className="btn btn-secondary" 
+              onClick={() => setShowRevize(true)}
+              disabled={isSubmitting}
+            >
+              ✏️ Revize İste
+            </button>
+            <button 
+              className="btn btn-primary" 
+              onClick={handleApprove}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? '⏳ İşleniyor...' : '✅ Tasarımı Onayla'}
+            </button>
+          </div>
+        ) : (
+          <div style={{ marginTop: 20, textAlign: 'left', animation: 'fadeIn 0.3s ease-in-out' }}>
+            <label className="label">Değiştirilmesini İstediğiniz Yerler:</label>
+            <textarea 
+              className="input" 
+              rows="4" 
+              placeholder="Lütfen tasarımda nelerin değişmesini istediğinizi yazın..."
+              value={revizeNotu}
+              onChange={e => setRevizeNotu(e.target.value)}
+              style={{ resize: 'vertical' }}
+            />
+            <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+              <button className="btn btn-secondary" onClick={() => setShowRevize(false)}>İptal</button>
+              <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleRevize} disabled={isSubmitting}>
+                {isSubmitting ? '⏳ Gönderiliyor...' : 'Talebi Gönder'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
 const styles = {
-  page: {
-    minHeight: '100vh',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '40px 20px',
-    background: 'var(--bg)',
-  },
-  resultCard: {
-    maxWidth: 480,
-    textAlign: 'center',
-    padding: '60px 40px',
-    border: '2px solid var(--success)',
-  },
-  resultTitle: {
-    fontFamily: 'var(--font-display)',
-    fontSize: 24,
-    color: 'var(--success)',
-    marginBottom: 12,
-  },
+  page: { minHeight: '100vh', padding: '40px 20px', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  center: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' },
+  card: { maxWidth: 500, margin: '0 auto', textAlign: 'center', padding: 40 },
+  title: { fontFamily: 'var(--font-display)', marginBottom: 12, color: 'var(--text)' },
+  text: { color: 'var(--text-muted)', lineHeight: 1.6, fontSize: 14 },
 };

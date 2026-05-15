@@ -7,19 +7,17 @@ export default function CustomerUpload() {
   const { shopSlug } = useParams();
   const [shopOwner,    setShopOwner]    = useState(null);
   const [notFound,     setNotFound]     = useState(false);
-  const [products,     setProducts]     = useState([]);
-  const [selectedProd, setSelectedProd] = useState(null);
-  const [orderNo,      setOrderNo]      = useState('');
+  
   const [customerName, setCustomerName] = useState('');
+  const [etsyOrderNo,  setEtsyOrderNo]  = useState(''); // Etsy sipariş numarası state'i eklendi
   const [file,         setFile]         = useState(null);
   const [preview,      setPreview]      = useState(null);
+  
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess,    setIsSuccess]    = useState(false);
   const [errorMsg,     setErrorMsg]     = useState('');
-  const [orderStatus,  setOrderStatus]  = useState('idle'); // idle | checking | valid | invalid | duplicate
-  const [orderMsg,     setOrderMsg]     = useState('');
 
-  // Mağaza sahibini bul
+  // Mağaza sahibini (SaaS Kullanıcısını) bul
   useEffect(() => {
     const init = async () => {
       const { data } = await supabase
@@ -30,16 +28,6 @@ export default function CustomerUpload() {
 
       if (data) {
         setShopOwner(data);
-        // Satıcının aktif ürünlerini çek
-        const { data: prods } = await supabase
-          .from('seller_products')
-          .select('*')
-          .eq('user_id', data.id)
-          .eq('is_active', true)
-          .order('sort_order');
-        const prodList = prods || [];
-        setProducts(prodList);
-        if (prodList.length === 1) setSelectedProd(prodList[0]);
       } else {
         setNotFound(true);
       }
@@ -56,42 +44,12 @@ export default function CustomerUpload() {
     reader.readAsDataURL(f);
   };
 
-  const handleOrderBlur = async () => {
-    const no = orderNo.trim();
-    if (!no || !shopOwner) return;
-    setOrderStatus('checking');
-    setOrderMsg('Kontrol ediliyor...');
-
-    try {
-      // Sadece duplicate kontrolü — Etsy doğrulaması devre dışı
-      const { data: dup } = await supabase
-        .from('orders')
-        .select('id')
-        .eq('user_id', shopOwner.id)
-        .eq('etsy_order_no', no)
-        .maybeSingle();
-
-      if (dup) {
-        setOrderStatus('duplicate');
-        setOrderMsg('Bu sipariş numarası zaten sisteme eklenmiş.');
-        return;
-      }
-
-      // Etsy doğrulaması yok — direkt geçerli say
-      setOrderStatus('valid');
-      setOrderMsg('✅ Sipariş numarası alındı.');
-    } catch {
-      // Hata olsa bile engelleme — geçerli say
-      setOrderStatus('valid');
-      setOrderMsg('✅ Sipariş numarası alındı.');
-    }
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!orderNo || !file || !customerName) { setErrorMsg('Lütfen tüm alanları doldurun.'); return; }
-    if (orderStatus === 'duplicate') { setErrorMsg('Bu sipariş zaten eklendi.'); return; }
-    if (orderStatus === 'invalid')   { setErrorMsg('Geçersiz sipariş numarası.'); return; }
+    if (!file || !customerName || !etsyOrderNo) { 
+      setErrorMsg('Lütfen adınızı, sipariş numaranızı girin ve bir fotoğraf yükleyin.'); 
+      return; 
+    }
 
     setIsSubmitting(true);
     setErrorMsg('');
@@ -99,23 +57,24 @@ export default function CustomerUpload() {
     try {
       // Görseli Supabase Storage'a yükle
       const ext  = file.name.split('.').pop();
-      const path = `${shopOwner.id}/${orderNo}_${Date.now()}.${ext}`;
-      await supabase.storage.from('orders').upload(path, file);
+      // Dosya adını etsy sipariş numarası ile ilişkilendir
+      const path = `${shopOwner.id}/${etsyOrderNo}_${Date.now()}.${ext}`;
+      
+      const { error: uploadErr } = await supabase.storage.from('orders').upload(path, file);
+      if (uploadErr) throw new Error('Fotoğraf yüklenemedi: ' + uploadErr.message);
+      
       const { data: { publicUrl } } = supabase.storage.from('orders').getPublicUrl(path);
 
-      // Siparişi oluştur
-      // Ürün seçili değilse ilk aktif ürünü kullan
-      const productToUse = selectedProd || products[0] || null;
-
+      // Siparişi "yeni" statüsüyle ve Etsy sipariş numarasıyla oluştur
       const { error: insertErr } = await supabase.from('orders').insert({
-        user_id:          shopOwner.id,
-        etsy_order_no:    orderNo.trim(),
+        user_id:          shopOwner.id,     // SaaS kullanıcısının (Satıcının) ID'si
+        etsy_order_no:    etsyOrderNo,      // Müşterinin girdiği Etsy numarası
         customer_name:    customerName,
         source_image_url: publicUrl,
-        status:             'yeni',
-        seller_product_id:  productToUse?.id || null,
-        print_width:        productToUse?.print_width  || 2475,
-        print_height:       productToUse?.print_height || 1155,
+        status:           'yeni',
+        // Varsayılan yüksek çözünürlüklü çalışma alanı boyutları
+        print_width:      3000,
+        print_height:     3000,
       });
 
       if (insertErr) throw insertErr;
@@ -154,23 +113,15 @@ export default function CustomerUpload() {
       <div className="card" style={{ textAlign: 'center', padding: 60, maxWidth: 500, margin: '0 auto' }}>
         <div style={{ fontSize: 48, marginBottom: 16 }}>✅</div>
         <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--success)', marginBottom: 12 }}>
-          Fotoğrafınız Alındı!
+          Tasarım İsteğiniz Alındı!
         </h2>
         <p style={{ color: 'var(--text-muted)', lineHeight: 1.7 }}>
-          Teşekkürler <strong>{customerName}</strong>! Tasarımınız hazırlandığında
-          Etsy mesajları üzerinden önizleme bağlantısı göndereceğiz.
+          Teşekkürler <strong>{customerName}</strong>! Yüklediğiniz görsel kullanılarak <strong>#{etsyOrderNo}</strong> numaralı siparişinize özel tasarım hazırlanacaktır. <br/><br/>
+          Tasarım bittiğinde onaylamanız için size bir bağlantı gönderilecektir.
         </p>
       </div>
     </div>
   );
-
-  const borderColor = {
-    idle:      'var(--border-light)',
-    checking:  'var(--warning)',
-    valid:     'var(--success)',
-    invalid:   'var(--danger)',
-    duplicate: 'var(--danger)',
-  }[orderStatus];
 
   return (
     <div style={styles.page}>
@@ -183,64 +134,13 @@ export default function CustomerUpload() {
             {shopOwner.shop_name}
           </h2>
           <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>
-            Etsy sipariş numaranızı girin ve fotoğrafınızı yükleyin.
+            Siparişinizde kullanılmasını istediğiniz fotoğrafı yükleyin.
           </p>
         </div>
 
         {errorMsg && <div className="alert alert-error" style={{ marginBottom: 16 }}>{errorMsg}</div>}
 
-        {/* Ürün seçimi — birden fazla ürün varsa göster */}
-        {products.length > 1 && (
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="label">Select Product</label>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {products.map(p => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => setSelectedProd(p)}
-                  style={{
-                    padding: '8px 16px',
-                    borderRadius: 8,
-                    border: selectedProd?.id === p.id
-                      ? '2px solid var(--brand)'
-                      : '1px solid var(--border-light)',
-                    background: selectedProd?.id === p.id ? 'var(--brand-light)' : 'var(--bg)',
-                    color: selectedProd?.id === p.id ? 'var(--brand)' : 'var(--text)',
-                    fontWeight: 600,
-                    fontSize: 13,
-                    cursor: 'pointer',
-                  }}
-                >
-                  {p.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-          {/* Sipariş no */}
-          <div className="form-group">
-            <label className="label">Etsy Sipariş Numarası</label>
-            <input
-              className="input"
-              placeholder="Örn: 1234567890"
-              value={orderNo}
-              onChange={e => { setOrderNo(e.target.value); setOrderStatus('idle'); setOrderMsg(''); }}
-              onBlur={handleOrderBlur}
-              style={{ borderColor }}
-            />
-            {orderMsg && (
-              <div className={`alert alert-${
-                orderStatus === 'valid' ? 'success' :
-                orderStatus === 'checking' ? 'warning' : 'error'
-              }`} style={{ marginTop: 6, padding: '8px 12px' }}>
-                {orderMsg}
-              </div>
-            )}
-          </div>
 
           {/* İsim */}
           <div className="form-group">
@@ -250,7 +150,23 @@ export default function CustomerUpload() {
               placeholder="Örn: Jane Smith"
               value={customerName}
               onChange={e => setCustomerName(e.target.value)}
+              required
             />
+          </div>
+
+          {/* Etsy Sipariş No */}
+          <div className="form-group">
+            <label className="label">Etsy Sipariş Numarası</label>
+            <input
+              className="input"
+              placeholder="Örn: 123456789"
+              value={etsyOrderNo}
+              onChange={e => setEtsyOrderNo(e.target.value.replace(/\D/g, ''))} // Sadece rakam kabul et
+              required
+            />
+            <small style={{ color: 'var(--text-dim)', fontSize: 11, marginTop: 4, display: 'block' }}>
+              Etsy sipariş onay e-postanızdaki numarayı giriniz.
+            </small>
           </div>
 
           {/* Fotoğraf yükleme */}
@@ -274,6 +190,7 @@ export default function CustomerUpload() {
                 accept="image/*"
                 onChange={handleFileChange}
                 style={styles.fileInput}
+                required
               />
             </div>
           </div>
@@ -281,10 +198,10 @@ export default function CustomerUpload() {
           <button
             type="submit"
             className="btn btn-primary btn-full"
-            disabled={isSubmitting || orderStatus === 'duplicate' || orderStatus === 'invalid'}
+            disabled={isSubmitting}
             style={{ marginTop: 8, padding: '14px' }}
           >
-            {isSubmitting ? '⏳ Yükleniyor...' : '🚀 Fotoğrafı Gönder'}
+            {isSubmitting ? '⏳ Yükleniyor...' : '🚀 Gönder ve Tasarıma Başla'}
           </button>
         </form>
       </div>

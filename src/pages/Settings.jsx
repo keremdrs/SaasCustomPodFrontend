@@ -2,9 +2,8 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
-import ProductsManager from '../components/ProductsManager';
 import '../index.css';
-import { SITE_URL } from '../siteConfig';
+
 export default function Settings() {
   const { user, profile: ctxProfile, refreshProfile } = useAuth();
 
@@ -18,42 +17,15 @@ export default function Settings() {
   const [shopSaving, setShopSaving] = useState(false);
   const [shopMsg,    setShopMsg]    = useState('');
 
-  // Printify
-  const [printifyToken,   setPrintifyToken]   = useState('');
-  const [printifyShopId,  setPrintifyShopId]  = useState('');
-  const [printifyShops,   setPrintifyShops]   = useState([]);
-  const [printifySaving,  setPrintifySaving]  = useState(false);
-  const [printifyMsg,     setPrintifyMsg]     = useState('');
-  const [printifyLoading, setPrintifyLoading] = useState(false);
-
-  // Printful
-  const [printfulToken,   setPrintfulToken]   = useState('');
-  const [printfulStoreId, setPrintfulStoreId] = useState('');
-  const [printfulStoreName, setPrintfulStoreName] = useState('');
-  const [printfulStores,  setPrintfulStores]  = useState([]);
-  const [printfulSaving,  setPrintfulSaving]  = useState(false);
-  const [printfulMsg,     setPrintfulMsg]     = useState('');
-  const [printfulLoading, setPrintfulLoading] = useState(false);
-const API = 'https://saascustompod.onrender.com';
-
-  // Etsy
-  const [etsyToken,    setEtsyToken]    = useState('');
-  const [etsyShopId,   setEtsyShopId]   = useState('');
-  const [etsySaving,   setEtsySaving]   = useState(false);
-  const [etsyMsg,      setEtsyMsg]      = useState('');
-  const [etsyLoading,  setEtsyLoading]  = useState(false);
-
   useEffect(() => {
     if (!user) return;
     init();
-
-
   }, [user]);
 
   const init = async () => {
     setPageLoading(true);
 
-    // Profile direkt çek
+    // Profili çek
     let p = ctxProfile;
     if (!p) {
       const { data } = await supabase
@@ -68,40 +40,6 @@ const API = 'https://saascustompod.onrender.com';
     if (p) {
       setShopName(p.shop_name || '');
       setShopSlug(p.shop_slug || '');
-    }
-
-    // Printify token
-    const { data: pt } = await supabase
-      .from('printify_tokens')
-      .select('access_token, printify_shop_id')
-      .eq('user_id', user.id)
-      .maybeSingle();
-    if (pt) {
-      setPrintifyToken(pt.access_token || '');
-      setPrintifyShopId(pt.printify_shop_id || '');
-    }
-
-    // Etsy token
-    const { data: et } = await supabase
-      .from('etsy_tokens')
-      .select('access_token, etsy_shop_id')
-      .eq('user_id', user.id)
-      .maybeSingle();
-    if (et) {
-      setEtsyToken(et.access_token || '');
-      setEtsyShopId(et.etsy_shop_id || '');
-    }
-
-    // Printful token
-    const { data: pft } = await supabase
-      .from('printful_tokens')
-      .select('access_token, store_id, store_name')
-      .eq('user_id', user.id)
-      .maybeSingle();
-    if (pft) {
-      setPrintfulToken(pft.access_token || '');
-      setPrintfulStoreId(pft.store_id   || '');
-      setPrintfulStoreName(pft.store_name || '');
     }
 
     setPageLoading(false);
@@ -119,6 +57,7 @@ const API = 'https://saascustompod.onrender.com';
       return;
     }
 
+    // Başkası bu adresi almış mı?
     const { data: existing } = await supabase
       .from('profiles')
       .select('id')
@@ -137,173 +76,14 @@ const API = 'https://saascustompod.onrender.com';
       .update({ shop_name: shopName, shop_slug: shopSlug })
       .eq('id', user.id);
 
-    if (error) setShopMsg('error:Kaydedilemedi: ' + error.message);
-    else {
+    if (error) {
+      setShopMsg('error:Kaydedilemedi: ' + error.message);
+    } else {
       setShopMsg('success:Mağaza bilgileri güncellendi!');
       refreshProfile();
     }
     setShopSaving(false);
   };
-
-  // ── Printify mağazalarını getir ──────────────────────────
-  const handleFetchPrintifyShops = async () => {
-    if (!printifyToken.trim()) { setPrintifyMsg('error:Lütfen token girin.'); return; }
-    setPrintifyLoading(true);
-    setPrintifyMsg('');
-    try {
-      // Doğrudan Printify CORS engeli — backend üzerinden çek
-      const res  = await fetch(
-        `https://saascustompod.onrender.com/api/printify/shops?token=${encodeURIComponent(printifyToken)}`
-      );
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      if (!Array.isArray(data)) throw new Error('Beklenmeyen yanıt');
-      setPrintifyShops(data);
-      if (data.length === 1) setPrintifyShopId(String(data[0].id));
-      setPrintifyMsg('success:Mağazalar yüklendi, birini seçin.');
-    } catch {
-      setPrintifyMsg('error:Token geçersiz veya Printify\'e bağlanılamadı.');
-    }
-    setPrintifyLoading(false);
-  };
-
-  // ── Printify kaydet ──────────────────────────────────────
-  const handlePrintifySave = async () => {
-    if (!printifyToken || !printifyShopId) {
-      setPrintifyMsg('error:Token ve mağaza seçimi zorunlu.');
-      return;
-    }
-    setPrintifySaving(true);
-    const { error } = await supabase
-      .from('printify_tokens')
-      .upsert(
-        { user_id: user.id, access_token: printifyToken, printify_shop_id: printifyShopId },
-        { onConflict: 'user_id' }
-      );
-    if (error) setPrintifyMsg('error:Kaydedilemedi: ' + error.message);
-    else setPrintifyMsg('success:Printify bağlantısı kaydedildi!');
-    setPrintifySaving(false);
-  };
-
-  // ── Printify bağlantıyı kes ──────────────────────────────
-  const handlePrintifyDisconnect = async () => {
-    if (!confirm('Printify bağlantısını kesmek istediğinize emin misiniz?')) return;
-    await supabase.from('printify_tokens').delete().eq('user_id', user.id);
-    setPrintifyToken('');
-    setPrintifyShopId('');
-    setPrintifyShops([]);
-    setPrintifyMsg('success:Bağlantı kesildi.');
-  };
-
-  // ── Etsy token blur — Shop ID otomatik çek ─────────────────
-  const handleEtsyTokenBlur = async () => {
-    if (!etsyToken.trim()) return;
-    setEtsyMsg('');
-    try {
-      const res  = await fetch(
-        `https://saascustompod.onrender.com/api/etsy/me?token=${encodeURIComponent(etsyToken)}`
-      );
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      if (data.shop_id) {
-        setEtsyShopId(String(data.shop_id));
-        setEtsyMsg('success:Mağaza bulundu: ' + data.login_name);
-      }
-    } catch (err) {
-      setEtsyMsg('error:Shop ID çekilemedi: ' + err.message);
-    }
-  };
-
-  // ── Etsy token kaydet ───────────────────────────────────────
-  const handleEtsySave = async () => {
-    if (!etsyToken.trim() || !etsyShopId.trim()) {
-      setEtsyMsg('error:Token ve Shop ID zorunludur.');
-      return;
-    }
-    setEtsySaving(true);
-    setEtsyMsg('');
-    const { error } = await supabase
-      .from('etsy_tokens')
-      .upsert({
-        user_id:      user.id,
-        access_token:  etsyToken.trim(),
-        refresh_token: 'personal',
-        expires_at:    9999999999999,
-        etsy_shop_id:  etsyShopId.trim(),
-      }, { onConflict: 'user_id' });
-
-    if (error) setEtsyMsg('error:Kaydedilemedi: ' + error.message);
-    else setEtsyMsg('success:Etsy bağlantısı kaydedildi!');
-    setEtsySaving(false);
-  };
-
-  // ── Etsy bağlantıyı kes ──────────────────────────────────
-  const handleEtsyDisconnect = async () => {
-    if (!confirm('Etsy bağlantısını kesmek istediğinize emin misiniz?')) return;
-    await supabase.from('etsy_tokens').delete().eq('user_id', user.id);
-    setEtsyToken('');
-    setEtsyShopId('');
-    setEtsyMsg('success:Bağlantı kesildi.');
-  };
-
-  // ── Printful mağazaları getir ──────────────────────────────
-const handleFetchPrintfulStores = async () => {
-  if (!printfulToken.trim()) { setPrintfulMsg('error:Lütfen token girin.'); return; }
-  setPrintfulLoading(true);
-  setPrintfulMsg('');
-  try {
-    const res  = await fetch(
-      `${API}/api/printful/stores?token=${encodeURIComponent(printfulToken)}`
-    );
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-    if (!Array.isArray(data)) throw new Error('Beklenmeyen yanıt');
-    setPrintfulStores(data);
-    if (data.length === 1) {
-      setPrintfulStoreId(String(data[0].id));
-      setPrintfulStoreName(data[0].name || '');
-    }
-    setPrintfulMsg('success:Mağazalar yüklendi, birini seçin.');
-  } catch (err) {
-    setPrintfulMsg('error:' + err.message);
-  }
-  setPrintfulLoading(false);
-};
-
-// ── Printful kaydet ────────────────────────────────────────
-const handlePrintfulSave = async () => {
-  if (!printfulToken || !printfulStoreId) {
-    setPrintfulMsg('error:Token ve mağaza seçimi zorunlu.');
-    return;
-  }
-  setPrintfulSaving(true);
-  const selectedStore = printfulStores.find(s => String(s.id) === String(printfulStoreId));
-  const { error } = await supabase
-    .from('printful_tokens')
-    .upsert(
-      {
-        user_id:      user.id,
-        access_token: printfulToken,
-        store_id:     String(printfulStoreId),
-        store_name:   selectedStore?.name || printfulStoreName || '',
-      },
-      { onConflict: 'user_id' }
-    );
-  if (error) setPrintfulMsg('error:Kaydedilemedi: ' + error.message);
-  else setPrintfulMsg('success:Printful bağlantısı kaydedildi! ✅');
-  setPrintfulSaving(false);
-};
-
-// ── Printful bağlantıyı kes ────────────────────────────────
-const handlePrintfulDisconnect = async () => {
-  if (!confirm('Printful bağlantısını kesmek istediğinize emin misiniz?')) return;
-  await supabase.from('printful_tokens').delete().eq('user_id', user.id);
-  setPrintfulToken('');
-  setPrintfulStoreId('');
-  setPrintfulStoreName('');
-  setPrintfulStores([]);
-  setPrintfulMsg('success:Bağlantı kesildi.');
-};
 
   // ── Render ───────────────────────────────────────────────
   if (pageLoading) return (
@@ -320,13 +100,15 @@ const handlePrintfulDisconnect = async () => {
         <div style={s.header}>
           <Link to="/dashboard" style={s.back}>← Dashboard</Link>
           <h1 style={s.title}>⚙️ Ayarlar</h1>
-          <p style={s.subtitle}>Mağaza bilgilerinizi ve entegrasyonlarınızı yönetin.</p>
+          <p style={s.subtitle}>Mağaza bilgilerinizi ve hesap detaylarınızı yönetin.</p>
         </div>
 
         {/* ── Mağaza Bilgileri ── */}
         <section className="card" style={s.section}>
           <h2 style={s.sectionTitle}>🏪 Mağaza Bilgileri</h2>
-          <p style={s.sectionDesc}>Müşteri sayfanızda görünecek bilgiler.</p>
+          <p style={s.sectionDesc}>
+            Müşterilerinizin fotoğraf yüklerken göreceği mağaza adı ve siparişleri toplayacağınız özel link adresiniz.
+          </p>
           <form onSubmit={handleShopSave} style={s.form}>
             <div className="form-group">
               <label className="label">Mağaza Adı</label>
@@ -339,7 +121,7 @@ const handlePrintfulDisconnect = async () => {
               />
             </div>
             <div className="form-group">
-              <label className="label">Mağaza Adresi</label>
+              <label className="label">Mağaza Adresi (Linkiniz)</label>
               <div style={{ display: 'flex' }}>
                 <span style={s.slugPrefix}>{window.location.host}/</span>
                 <input
@@ -361,226 +143,20 @@ const handlePrintfulDisconnect = async () => {
           </form>
         </section>
 
-        {/* ── Printify ── */}
+        {/* ── Hesap Bilgileri ── */}
         <section className="card" style={s.section}>
-          <h2 style={s.sectionTitle}>📦 Printify Entegrasyonu</h2>
-          <p style={s.sectionDesc}>
-            Kargo siparişleri Printify hesabınız üzerinden gönderilir.{' '}
-            <a href="https://printify.com/app/account/api" target="_blank" rel="noreferrer" style={{ color: 'var(--brand)' }}>
-              API token'ı buradan alın →
-            </a>
-          </p>
-          <div style={s.form}>
-            <div className="form-group">
-              <label className="label">Printify API Token</label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  className="input"
-                  type="password"
-                  value={printifyToken}
-                  onChange={e => { setPrintifyToken(e.target.value); setPrintifyShops([]); }}
-                  placeholder="eyJhbGci..."
-                />
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={handleFetchPrintifyShops}
-                  disabled={printifyLoading}
-                  style={{ whiteSpace: 'nowrap' }}
-                >
-                  {printifyLoading ? '⏳' : '🔍 Mağazaları Getir'}
-                </button>
-              </div>
-            </div>
-
-            {printifyShops.length > 0 && (
-              <div className="form-group">
-                <label className="label">Printify Mağazası Seçin</label>
-                <select
-                  className="input"
-                  value={printifyShopId}
-                  onChange={e => setPrintifyShopId(e.target.value)}
-                >
-                  <option value="">-- Seçin --</option>
-                  {printifyShops.map(shop => (
-                    <option key={shop.id} value={shop.id}>
-                      {shop.title} (ID: {shop.id})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {printifyShopId && !printifyShops.length && (
-              <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-                Kayıtlı mağaza ID: <strong style={{ color: 'var(--success)' }}>{printifyShopId}</strong>
-              </div>
-            )}
-
-            <StatusMsg msg={printifyMsg} />
-
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={handlePrintifySave}
-                disabled={printifySaving || !printifyToken || !printifyShopId}
-              >
-                {printifySaving ? 'Kaydediliyor...' : '💾 Kaydet'}
-              </button>
-              {printifyToken && (
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={handlePrintifyDisconnect}
-                  style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }}
-                >
-                  Bağlantıyı Kes
-                </button>
-              )}
-            </div>
-          </div>
-        </section>
-
-        {/* ── Products ── */}
-        <section className="card" style={s.section}>
-          <h2 style={s.sectionTitle}>🖨️ Ürün Konfigürasyonları</h2>
-          <p style={s.sectionDesc}>
-            Müşterilerinize sunmak istediğiniz Printify ürünlerini buradan ekleyin.
-            Her ürün için blueprint, provider ve variant seçmeniz yeterli.
-          </p>
-         <ProductsManager
-  userId={user.id}
-  printifyToken={printifyToken}
-  printfulToken={printfulToken}
-  printfulStoreId={printfulStoreId}
-/>
-        </section>
-
-        {/* ── Etsy ── */}
-        <section className="card" style={s.section}>
-          <h2 style={s.sectionTitle}>🛍️ Etsy Entegrasyonu</h2>
-          <div className="alert alert-warning">
-            <strong>⏳ Yakında</strong> — Etsy entegrasyonu şu an devre dışı.
-            Sipariş numarası doğrulaması olmadan siparişler alınmaya devam eder.
-            Kargo adresleri ShippingModal'dan manuel girilir.
-            <br /><br />
-            Etsy Commercial Access onayı alındıktan sonra bu özellik aktif edilecek.
-          </div>
-        </section>
-
-              {/* ── Printful ── */}
-<section className="card" style={s.section}>
-  <h2 style={s.sectionTitle}>🖨️ Printful Entegrasyonu</h2>
-  <p style={s.sectionDesc}>
-    Printful üzerinden sipariş gönderimi ve EDM tasarım editörü.{' '}
-    <a
-      href="https://www.printful.com/dashboard/settings/api"
-      target="_blank"
-      rel="noreferrer"
-      style={{ color: 'var(--brand)' }}
-    >
-      API token'ı buradan alın →
-    </a>
-  </p>
-  <p style={{ ...s.sectionDesc, fontSize: 12, color: 'var(--text-dim)' }}>
-    Token oluştururken <strong>Embedded Designer</strong> yetkisini aktif edin (EDM için gerekli).
-  </p>
-
-  <div style={s.form}>
-    <div className="form-group">
-      <label className="label">Printful API Token</label>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <input
-          className="input"
-          type="password"
-          value={printfulToken}
-          onChange={e => { setPrintfulToken(e.target.value); setPrintfulStores([]); }}
-          placeholder="Bearer token..."
-        />
-        <button
-          type="button"
-          className="btn btn-secondary"
-          onClick={handleFetchPrintfulStores}
-          disabled={printfulLoading}
-          style={{ whiteSpace: 'nowrap' }}
-        >
-          {printfulLoading ? '⏳' : '🔍 Mağazaları Getir'}
-        </button>
-      </div>
-    </div>
-
-    {/* Mağaza listesi */}
-    {printfulStores.length > 0 && (
-      <div className="form-group">
-        <label className="label">Printful Mağazası Seçin</label>
-        <select
-          className="input"
-          value={printfulStoreId}
-          onChange={e => {
-            setPrintfulStoreId(e.target.value);
-            const s = printfulStores.find(x => String(x.id) === e.target.value);
-            setPrintfulStoreName(s?.name || '');
-          }}
-        >
-          <option value="">-- Seçin --</option>
-          {printfulStores.map(store => (
-            <option key={store.id} value={store.id}>
-              {store.name} (ID: {store.id})
-            </option>
-          ))}
-        </select>
-      </div>
-    )}
-
-    {/* Kayıtlı mağaza göster */}
-    {printfulStoreId && !printfulStores.length && (
-      <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 8 }}>
-        Kayıtlı mağaza:{' '}
-        <strong style={{ color: 'var(--success)' }}>
-          {printfulStoreName || printfulStoreId}
-        </strong>
-      </div>
-    )}
-
-    <StatusMsg msg={printfulMsg} />
-
-    <div style={{ display: 'flex', gap: 8 }}>
-      <button
-        type="button"
-        className="btn btn-primary"
-        onClick={handlePrintfulSave}
-        disabled={printfulSaving || !printfulToken || !printfulStoreId}
-      >
-        {printfulSaving ? 'Kaydediliyor...' : '💾 Kaydet'}
-      </button>
-      {printfulToken && (
-        <button
-          type="button"
-          className="btn btn-secondary"
-          onClick={handlePrintfulDisconnect}
-          style={{ color: 'var(--danger)' }}
-        >
-          Bağlantıyı Kes
-        </button>
-      )}
-    </div>
-  </div>
-</section>
-
-
-        {/* ── Hesap ── */}
-        <section className="card" style={s.section}>
-          <h2 style={s.sectionTitle}>👤 Hesap</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <h2 style={s.sectionTitle}>👤 Hesap Detayları</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <Row label="E-posta" value={profile?.email} />
-            <Row label="Plan"    value={profile?.plan} />
+            <Row label="Plan"    value={profile?.plan || 'Standart'} />
             <Row
-              label="Kredi"
+              label="Kredi Bakiyesi"
               value={
-                <span>
-                  <strong style={{ color: 'var(--brand)', fontSize: 18 }}>{profile?.credits}</strong>
-                  {' '}<Link to="/credits" style={{ color: 'var(--brand)', fontSize: 13 }}>+ Kredi satın al</Link>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <strong style={{ color: 'var(--brand)', fontSize: 20 }}>{profile?.credits}</strong>
+                  <Link to="/credits" className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12 }}>
+                    + Kredi Yükle
+                  </Link>
                 </span>
               }
             />
@@ -595,7 +171,7 @@ const handlePrintfulDisconnect = async () => {
 function Row({ label, value }) {
   return (
     <div style={{ fontSize: 14, color: 'var(--text-muted)', display: 'flex', gap: 8, alignItems: 'center' }}>
-      <span style={{ minWidth: 80 }}>{label}:</span>
+      <span style={{ minWidth: 100 }}>{label}:</span>
       <strong style={{ color: 'var(--text)' }}>{value}</strong>
     </div>
   );
@@ -633,6 +209,4 @@ const s = {
     color: 'var(--text-muted)',
     whiteSpace: 'nowrap',
   },
-  connectedBox:  { padding: 20, background: 'var(--success-bg)', borderRadius: 'var(--radius)', border: '1px solid rgba(34,197,94,0.3)' },
-  connectedBadge:{ fontSize: 15, fontWeight: 700, color: 'var(--success)' },
 };

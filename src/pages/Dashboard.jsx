@@ -4,11 +4,11 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import OrdersTable    from '../components/OrdersTable';
 import DesignWorkspace from '../components/DesignWorkspace';
-import ShippingModal          from '../components/ShippingModal';
 import AdminTemplateManager  from '../components/AdminTemplateManager';
 import '../index.css';
-import AdminPromptTemplateManager from '../components/AdminPromptTemplateManager';  // ← yeni
+import AdminPromptTemplateManager from '../components/AdminPromptTemplateManager';
 import { SITE_URL } from '../siteConfig';
+
 const UI = {
   IDLE:          'IDLE',
   PROCESSING:    'PROCESSING',
@@ -76,10 +76,9 @@ export default function Dashboard() {
   const [mockups,        setMockups]        = useState([]);
   const [approvalLink,   setApprovalLink]   = useState('');
   const [errorMsg,       setErrorMsg]       = useState('');
-  const [shippingOrder,      setShippingOrder]      = useState(null);
+  
   const [showTemplateAdmin,        setShowTemplateAdmin]        = useState(false);
   const [showPromptTemplateAdmin,  setShowPromptTemplateAdmin]  = useState(false);
-  const [adminPrintifyToken, setAdminPrintifyToken] = useState(null);
 
   // ── Veri yükle ────────────────────────────────────────────
   useEffect(() => {
@@ -90,16 +89,6 @@ export default function Dashboard() {
     }
     fetchAll();
   }, [user]);
-
-  // Admin token'ı Supabase'den çek
-  const fetchAdminToken = async () => {
-    const { data } = await supabase
-      .from('printify_tokens')
-      .select('access_token')
-      .eq('user_id', user.id)
-      .maybeSingle();
-    if (data?.access_token) setAdminPrintifyToken(data.access_token);
-  };
 
   const fetchAll = async () => {
     try {
@@ -133,34 +122,51 @@ export default function Dashboard() {
   };
 
   // ── Onaya gönder ─────────────────────────────────────────
+// ── Onaya gönder ─────────────────────────────────────────
+ // ── Onaya gönder ─────────────────────────────────────────
   const handleSendForApproval = async (printFileB64, mockupList) => {
     if (!activeOrder) return;
 
-    const fileName   = `${user.id}/${activeOrder.etsy_order_no}_${Date.now()}.jpg`;
-    const base64Data = printFileB64.split(',')[1];
-    const byteChars  = atob(base64Data);
-    const byteArray  = new Uint8Array(byteChars.length);
-    for (let i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
-    const blob = new Blob([byteArray], { type: 'image/jpeg' });
+    try {
+      // 1. Base64 verisini performanslı bir şekilde Blob'a çeviriyoruz
+      const base64Response = await fetch(printFileB64);
+      const blob = await base64Response.blob();
 
-    const { error: uploadErr } = await supabase.storage.from('orders').upload(fileName, blob, { upsert: true });
-    if (uploadErr) { setErrorMsg('Dosya yüklenemedi: ' + uploadErr.message); return; }
+      const fileName = `${user.id}/${activeOrder.id}_${Date.now()}.png`;
 
-    const { data: { publicUrl } } = supabase.storage.from('orders').getPublicUrl(fileName);
+      // 2. Supabase Storage'a yükleme
+      const { error: uploadErr } = await supabase.storage
+        .from('orders')
+        .upload(fileName, blob, { 
+          contentType: 'image/png', 
+          upsert: true 
+        });
+        
+      if (uploadErr) throw new Error('Dosya yüklenemedi: ' + uploadErr.message);
 
-    await supabase.from('orders').update({
-      status:         'onay_bekliyor',
-      mockup_urls:    mockupList,
-      print_file_url: publicUrl,
-    }).eq('id', activeOrder.id);
+      const { data: { publicUrl } } = supabase.storage.from('orders').getPublicUrl(fileName);
 
-    const link = `${SITE_URL}/onay/${activeOrder.id}`;
-    setApprovalLink(link);
-    setUiState(UI.LINK_READY);
-    fetchAll();
+      // 3. Sipariş durumunu güncelle
+      const { error: updateErr } = await supabase.from('orders').update({
+        status:         'onay_bekliyor',
+        mockup_urls:    mockupList, // Artık boş gönderiyoruz
+        print_file_url: publicUrl,
+      }).eq('id', activeOrder.id);
+
+      if (updateErr) throw updateErr;
+
+      // 4. Linki oluştur ve UI durumunu değiştir
+      const link = `${SITE_URL}/onay/${activeOrder.id}`;
+      setApprovalLink(link);
+      setUiState(UI.LINK_READY); // Burası Dashboard'daki onay linki ekranını açar
+      fetchAll();
+
+    } catch (err) {
+      console.error("Gönderim Hatası:", err);
+      setErrorMsg('Tasarım gönderilemedi: ' + err.message);
+    }
   };
 
-  // Google ile giriş yapıp shop_slug girmemiş kullanıcı
   if (needsOnboarding) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)', padding: 20 }}>
       <div className="card" style={{ maxWidth: 440, width: '100%', textAlign: 'center', padding: 48 }}>
@@ -183,7 +189,6 @@ export default function Dashboard() {
 
   return (
     <div style={s.root}>
-
       {/* ── Sidebar ── */}
       <aside style={s.sidebar}>
         <div style={s.logo}>
@@ -191,21 +196,18 @@ export default function Dashboard() {
           <span style={s.logoText}>SnapMyCase</span>
         </div>
 
-        {/* Kredi */}
         <div style={s.creditBox}>
           <div style={s.creditLabel}>Kredi Bakiyesi</div>
           <div style={s.creditValue}>{profile.credits}</div>
           <Link to="/credits" style={s.creditBtn}>+ Kredi Satın Al</Link>
         </div>
 
-        {/* Nav */}
         <nav style={s.nav}>
           <div style={s.navActive}>📋 Siparişler</div>
           <Link to="/settings" style={s.navLink}>⚙️ Ayarlar</Link>
           <Link to="/credits"  style={s.navLink}>💳 Krediler</Link>
         </nav>
 
-        {/* Mağaza linki */}
         {profile.shop_slug && (
           <div style={s.shopBox}>
             <div style={s.shopLabel}>Müşteri Sayfanız</div>
@@ -223,28 +225,26 @@ export default function Dashboard() {
         )}
 
         {profile?.is_super_admin && (
-  <>
-    <button
-      onClick={() => setShowTemplateAdmin(true)}
-      style={{ ...s.signOut, color: 'var(--brand)', borderColor: 'var(--brand)', marginBottom: 4 }}
-    >
-      🖨️ Blueprint Templates
-    </button>
-    <button
-      onClick={() => setShowPromptTemplateAdmin(true)}
-      style={{ ...s.signOut, color: 'var(--brand)', borderColor: 'var(--brand)', marginBottom: 4 }}
-    >
-      🎨 AI Stil Şablonları
-    </button>
-  </>
-)}
+          <>
+            <button
+              onClick={() => setShowTemplateAdmin(true)}
+              style={{ ...s.signOut, color: 'var(--brand)', borderColor: 'var(--brand)', marginBottom: 4 }}
+            >
+              🖨️ Blueprint Templates
+            </button>
+            <button
+              onClick={() => setShowPromptTemplateAdmin(true)}
+              style={{ ...s.signOut, color: 'var(--brand)', borderColor: 'var(--brand)', marginBottom: 4 }}
+            >
+              🎨 AI Stil Şablonları
+            </button>
+          </>
+        )}
         <button onClick={signOut} style={s.signOut}>Çıkış Yap</button>
       </aside>
 
       {/* ── Ana içerik ── */}
       <main style={s.main}>
-
-        {/* İstatistikler */}
         <div style={s.stats}>
           {[
             { label: 'Revize',        count: orders.revize.length,        color: 'var(--danger)' },
@@ -261,18 +261,14 @@ export default function Dashboard() {
 
         {errorMsg && <div className="alert alert-error" style={{ marginBottom: 16 }}>{errorMsg}</div>}
 
-        {/* Sipariş tablosu */}
         <OrdersTable
           orders={allOrders}
           activeOrderId={activeOrder?.id}
           onProcess={handleProcessOrder}
-          onOpenShipping={setShippingOrder}
           onRefresh={fetchAll}
           userId={user.id}
-  onShip={(order) => setShippingOrder(order)}
         />
 
-        {/* Boş durum */}
         {uiState === UI.IDLE && !activeOrder && (
           <div className="card" style={s.empty}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>🎨</div>
@@ -283,7 +279,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Tasarım alanı */}
         {activeOrder && uiState !== UI.LINK_READY && (
           <DesignWorkspace
             activeOrder={activeOrder}
@@ -302,13 +297,12 @@ export default function Dashboard() {
           />
         )}
 
-        {/* Link hazır */}
         {uiState === UI.LINK_READY && (
           <div className="card" style={{ textAlign: 'center', marginTop: 20, padding: 40 }}>
             <div style={{ fontSize: 48, marginBottom: 16 }}>✅</div>
             <h2 style={{ fontFamily: 'var(--font-display)', marginBottom: 8 }}>Onay Linki Hazır!</h2>
             <p style={{ color: 'var(--text-muted)', marginBottom: 20, fontSize: 14 }}>
-              Aşağıdaki linki müşterine Etsy üzerinden gönder
+              Müşterine göndereceğin onay linki hazırlandı.
             </p>
             <div style={s.linkBox}>{approvalLink}</div>
             <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 16 }}>
@@ -329,26 +323,12 @@ export default function Dashboard() {
         )}
       </main>
 
-      {/* ShippingModal */}
       {showTemplateAdmin && (
         <AdminTemplateManager onClose={() => setShowTemplateAdmin(false)} />
       )}
       {showPromptTemplateAdmin && profile?.is_super_admin && (
         <AdminPromptTemplateManager
           onClose={() => { setShowPromptTemplateAdmin(false); fetchAll(); }}
-        />
-      )}
-
-      {shippingOrder && (
-        <ShippingModal
-          order={shippingOrder}
-          userId={user.id}
-          onClose={() => setShippingOrder(null)}
-          onSuccess={() => {
-            setShippingOrder(null);
-            fetchAll();
-            alert('🎉 Printify\'a başarıyla gönderildi!');
-          }}
         />
       )}
     </div>
