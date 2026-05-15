@@ -8,6 +8,7 @@ import ShippingModal          from '../components/ShippingModal';
 import AdminTemplateManager  from '../components/AdminTemplateManager';
 import '../index.css';
 import AdminPromptTemplateManager from '../components/AdminPromptTemplateManager';  // ← yeni
+import { SITE_URL } from '../siteConfig';
 const UI = {
   IDLE:          'IDLE',
   PROCESSING:    'PROCESSING',
@@ -51,7 +52,7 @@ function OnboardingForm({ userId, onDone }) {
       <div className="form-group">
         <label className="label">Mağaza Adresi</label>
         <input className="input" placeholder="janes-shop" value={shopSlug} onChange={handleSlug} required minLength={3} maxLength={40} />
-        <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>snapmycase.com/{shopSlug || '...'}</span>
+        <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>www.snapmycase.com/{shopSlug || '...'}</span>
       </div>
       <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
         {loading ? 'Kaydediliyor...' : 'Mağazamı Kur →'}
@@ -153,7 +154,7 @@ export default function Dashboard() {
       print_file_url: publicUrl,
     }).eq('id', activeOrder.id);
 
-    const link = `${window.location.host}/onay/${activeOrder.id}`;
+    const link = `${SITE_URL}/onay/${activeOrder.id}`;
     setApprovalLink(link);
     setUiState(UI.LINK_READY);
     fetchAll();
@@ -212,7 +213,7 @@ export default function Dashboard() {
             <button
               style={s.copyBtn}
               onClick={() => {
-                navigator.clipboard.writeText(`${window.location.host}/${profile.shop_slug}`);
+               navigator.clipboard.writeText(`${SITE_URL}/${profile.shop_slug}`);
                 alert('Link kopyalandı!');
               }}
             >

@@ -38,7 +38,33 @@ export default function ShippingModal({ order, userId, onClose, onSuccess }) {
 
   // ── Printify'a gönder ───────────────────────────────────
   const handleSend = async () => {
-    const required = ['firstName', 'lastName', 'address1', 'city', 'zip', 'country'];
+
+// ShippingModal.jsx'te handleSubmit içinde
+
+const isPrintful = order.print_file_url?.startsWith('printful-template:');
+const pf_template_id = isPrintful
+  ? parseInt(order.print_file_url.split(':')[1])
+  : null;
+
+if (isPrintful) {
+  // Printful order
+  const res = await fetch(`${API}/api/printful/order-from-template`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user_id:           userId,
+      template_id:       pf_template_id,
+      catalog_variant_id: order.printful_variant_id || selectedProduct?.printful_variant_id,
+      shipping,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error);
+  // Sipariş tamamlandı
+  await supabase.from('orders').update({ status: 'tamamlandi' }).eq('id', order.id);
+  onSuccess?.();
+} else {
+ const required = ['firstName', 'lastName', 'address1', 'city', 'zip', 'country'];
     const missing  = required.filter(k => !shipping[k].trim());
     if (missing.length) { setError('Lütfen tüm zorunlu alanları doldurun.'); return; }
 
@@ -71,6 +97,10 @@ export default function ShippingModal({ order, userId, onClose, onSuccess }) {
       setError('Printify hatası: ' + err.message);
     }
     setIsSending(false);
+}
+
+
+    
   };
 
   return (

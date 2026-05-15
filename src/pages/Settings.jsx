@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import ProductsManager from '../components/ProductsManager';
 import '../index.css';
-
+import { SITE_URL } from '../siteConfig';
 export default function Settings() {
   const { user, profile: ctxProfile, refreshProfile } = useAuth();
 
@@ -25,6 +25,16 @@ export default function Settings() {
   const [printifySaving,  setPrintifySaving]  = useState(false);
   const [printifyMsg,     setPrintifyMsg]     = useState('');
   const [printifyLoading, setPrintifyLoading] = useState(false);
+
+  // Printful
+  const [printfulToken,   setPrintfulToken]   = useState('');
+  const [printfulStoreId, setPrintfulStoreId] = useState('');
+  const [printfulStoreName, setPrintfulStoreName] = useState('');
+  const [printfulStores,  setPrintfulStores]  = useState([]);
+  const [printfulSaving,  setPrintfulSaving]  = useState(false);
+  const [printfulMsg,     setPrintfulMsg]     = useState('');
+  const [printfulLoading, setPrintfulLoading] = useState(false);
+const API = 'https://saascustompod.onrender.com';
 
   // Etsy
   const [etsyToken,    setEtsyToken]    = useState('');
@@ -80,6 +90,18 @@ export default function Settings() {
     if (et) {
       setEtsyToken(et.access_token || '');
       setEtsyShopId(et.etsy_shop_id || '');
+    }
+
+    // Printful token
+    const { data: pft } = await supabase
+      .from('printful_tokens')
+      .select('access_token, store_id, store_name')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (pft) {
+      setPrintfulToken(pft.access_token || '');
+      setPrintfulStoreId(pft.store_id   || '');
+      setPrintfulStoreName(pft.store_name || '');
     }
 
     setPageLoading(false);
@@ -223,6 +245,65 @@ export default function Settings() {
     setEtsyShopId('');
     setEtsyMsg('success:Bağlantı kesildi.');
   };
+
+  // ── Printful mağazaları getir ──────────────────────────────
+const handleFetchPrintfulStores = async () => {
+  if (!printfulToken.trim()) { setPrintfulMsg('error:Lütfen token girin.'); return; }
+  setPrintfulLoading(true);
+  setPrintfulMsg('');
+  try {
+    const res  = await fetch(
+      `${API}/api/printful/stores?token=${encodeURIComponent(printfulToken)}`
+    );
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    if (!Array.isArray(data)) throw new Error('Beklenmeyen yanıt');
+    setPrintfulStores(data);
+    if (data.length === 1) {
+      setPrintfulStoreId(String(data[0].id));
+      setPrintfulStoreName(data[0].name || '');
+    }
+    setPrintfulMsg('success:Mağazalar yüklendi, birini seçin.');
+  } catch (err) {
+    setPrintfulMsg('error:' + err.message);
+  }
+  setPrintfulLoading(false);
+};
+
+// ── Printful kaydet ────────────────────────────────────────
+const handlePrintfulSave = async () => {
+  if (!printfulToken || !printfulStoreId) {
+    setPrintfulMsg('error:Token ve mağaza seçimi zorunlu.');
+    return;
+  }
+  setPrintfulSaving(true);
+  const selectedStore = printfulStores.find(s => String(s.id) === String(printfulStoreId));
+  const { error } = await supabase
+    .from('printful_tokens')
+    .upsert(
+      {
+        user_id:      user.id,
+        access_token: printfulToken,
+        store_id:     String(printfulStoreId),
+        store_name:   selectedStore?.name || printfulStoreName || '',
+      },
+      { onConflict: 'user_id' }
+    );
+  if (error) setPrintfulMsg('error:Kaydedilemedi: ' + error.message);
+  else setPrintfulMsg('success:Printful bağlantısı kaydedildi! ✅');
+  setPrintfulSaving(false);
+};
+
+// ── Printful bağlantıyı kes ────────────────────────────────
+const handlePrintfulDisconnect = async () => {
+  if (!confirm('Printful bağlantısını kesmek istediğinize emin misiniz?')) return;
+  await supabase.from('printful_tokens').delete().eq('user_id', user.id);
+  setPrintfulToken('');
+  setPrintfulStoreId('');
+  setPrintfulStoreName('');
+  setPrintfulStores([]);
+  setPrintfulMsg('success:Bağlantı kesildi.');
+};
 
   // ── Render ───────────────────────────────────────────────
   if (pageLoading) return (
@@ -368,7 +449,12 @@ export default function Settings() {
             Müşterilerinize sunmak istediğiniz Printify ürünlerini buradan ekleyin.
             Her ürün için blueprint, provider ve variant seçmeniz yeterli.
           </p>
-          <ProductsManager userId={user.id} printifyToken={printifyToken} />
+         <ProductsManager
+  userId={user.id}
+  printifyToken={printifyToken}
+  printfulToken={printfulToken}
+  printfulStoreId={printfulStoreId}
+/>
         </section>
 
         {/* ── Etsy ── */}
@@ -382,6 +468,106 @@ export default function Settings() {
             Etsy Commercial Access onayı alındıktan sonra bu özellik aktif edilecek.
           </div>
         </section>
+
+              {/* ── Printful ── */}
+<section className="card" style={s.section}>
+  <h2 style={s.sectionTitle}>🖨️ Printful Entegrasyonu</h2>
+  <p style={s.sectionDesc}>
+    Printful üzerinden sipariş gönderimi ve EDM tasarım editörü.{' '}
+    <a
+      href="https://www.printful.com/dashboard/settings/api"
+      target="_blank"
+      rel="noreferrer"
+      style={{ color: 'var(--brand)' }}
+    >
+      API token'ı buradan alın →
+    </a>
+  </p>
+  <p style={{ ...s.sectionDesc, fontSize: 12, color: 'var(--text-dim)' }}>
+    Token oluştururken <strong>Embedded Designer</strong> yetkisini aktif edin (EDM için gerekli).
+  </p>
+
+  <div style={s.form}>
+    <div className="form-group">
+      <label className="label">Printful API Token</label>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input
+          className="input"
+          type="password"
+          value={printfulToken}
+          onChange={e => { setPrintfulToken(e.target.value); setPrintfulStores([]); }}
+          placeholder="Bearer token..."
+        />
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={handleFetchPrintfulStores}
+          disabled={printfulLoading}
+          style={{ whiteSpace: 'nowrap' }}
+        >
+          {printfulLoading ? '⏳' : '🔍 Mağazaları Getir'}
+        </button>
+      </div>
+    </div>
+
+    {/* Mağaza listesi */}
+    {printfulStores.length > 0 && (
+      <div className="form-group">
+        <label className="label">Printful Mağazası Seçin</label>
+        <select
+          className="input"
+          value={printfulStoreId}
+          onChange={e => {
+            setPrintfulStoreId(e.target.value);
+            const s = printfulStores.find(x => String(x.id) === e.target.value);
+            setPrintfulStoreName(s?.name || '');
+          }}
+        >
+          <option value="">-- Seçin --</option>
+          {printfulStores.map(store => (
+            <option key={store.id} value={store.id}>
+              {store.name} (ID: {store.id})
+            </option>
+          ))}
+        </select>
+      </div>
+    )}
+
+    {/* Kayıtlı mağaza göster */}
+    {printfulStoreId && !printfulStores.length && (
+      <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 8 }}>
+        Kayıtlı mağaza:{' '}
+        <strong style={{ color: 'var(--success)' }}>
+          {printfulStoreName || printfulStoreId}
+        </strong>
+      </div>
+    )}
+
+    <StatusMsg msg={printfulMsg} />
+
+    <div style={{ display: 'flex', gap: 8 }}>
+      <button
+        type="button"
+        className="btn btn-primary"
+        onClick={handlePrintfulSave}
+        disabled={printfulSaving || !printfulToken || !printfulStoreId}
+      >
+        {printfulSaving ? 'Kaydediliyor...' : '💾 Kaydet'}
+      </button>
+      {printfulToken && (
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={handlePrintfulDisconnect}
+          style={{ color: 'var(--danger)' }}
+        >
+          Bağlantıyı Kes
+        </button>
+      )}
+    </div>
+  </div>
+</section>
+
 
         {/* ── Hesap ── */}
         <section className="card" style={s.section}>
